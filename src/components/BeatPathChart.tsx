@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ScheduleStep } from '../types'
+import type { ScheduleStep, StepPhase } from '../types'
 import { formatHz } from '../utils/schedule'
 
 interface BeatPathChartProps {
@@ -12,17 +12,51 @@ interface BeatPathChartProps {
 }
 
 const W = 640
-const H = 200
-const PAD = { top: 28, right: 16, bottom: 36, left: 40 }
+const H = 220
+const PAD = { top: 28, right: 16, bottom: 40, left: 40 }
 
-function phaseColor(phase: ScheduleStep['phase']): string {
+function phaseColor(phase: StepPhase): string {
   switch (phase) {
     case 'ramp-in':
       return 'var(--phase-in)'
     case 'hold':
       return 'var(--phase-hold)'
+    case 'wake':
+      return 'var(--phase-wake)'
+    case 'dip':
+      return 'var(--phase-dip)'
     case 'ramp-out':
       return 'var(--phase-out)'
+  }
+}
+
+function phaseBandFill(phase: StepPhase): string {
+  switch (phase) {
+    case 'ramp-in':
+      return 'rgba(122, 162, 247, 0.08)'
+    case 'hold':
+      return 'rgba(110, 231, 197, 0.06)'
+    case 'wake':
+      return 'rgba(240, 180, 41, 0.14)'
+    case 'dip':
+      return 'rgba(125, 211, 252, 0.14)'
+    case 'ramp-out':
+      return 'rgba(199, 146, 234, 0.08)'
+  }
+}
+
+function shortPhaseLabel(phase: StepPhase): string {
+  switch (phase) {
+    case 'ramp-in':
+      return 'Entry'
+    case 'hold':
+      return 'Hold'
+    case 'wake':
+      return 'Wake'
+    case 'dip':
+      return 'Deep'
+    case 'ramp-out':
+      return 'Exit'
   }
 }
 
@@ -36,7 +70,7 @@ export function BeatPathChart({
     if (schedule.length === 0) return null
 
     const totalSec = schedule.reduce((s, step) => s + step.durationSec, 0)
-    const maxHz = Math.max(...schedule.map((s) => s.beatHz), 18)
+    const maxHz = Math.max(...schedule.map((s) => s.beatHz), 10)
     const minHz = Math.min(...schedule.map((s) => s.beatHz), 0)
     const yMin = Math.max(0, Math.floor(minHz) - 1)
     const yMax = Math.ceil(maxHz) + 1
@@ -48,7 +82,6 @@ export function BeatPathChart({
     const yAt = (hz: number) =>
       PAD.top + plotH - ((hz - yMin) / (yMax - yMin)) * plotH
 
-    // Step segments with start/end times
     const segments: Array<{
       step: ScheduleStep
       index: number
@@ -74,15 +107,6 @@ export function BeatPathChart({
       t = t1
     })
 
-    // Polyline through midpoints of each step (valley shape)
-    const points = segments
-      .map((seg) => {
-        const midX = (seg.x0 + seg.x1) / 2
-        return `${midX},${seg.y}`
-      })
-      .join(' ')
-
-    // Also build a step-function path (horizontal per step)
     const stepPath = segments
       .map((seg, i) => {
         const cmd = i === 0 ? `M ${seg.x0} ${seg.y}` : `L ${seg.x0} ${seg.y}`
@@ -90,45 +114,67 @@ export function BeatPathChart({
       })
       .join(' ')
 
-    // Phase band boundaries
+    // Merge consecutive identical phases for band labels (hold chunks merge)
     const phaseBands: Array<{
-      phase: ScheduleStep['phase']
+      phase: StepPhase
       label: string
       x0: number
       x1: number
+      id: number
     }> = []
     for (const seg of segments) {
       const last = phaseBands[phaseBands.length - 1]
-      if (last && last.phase === seg.step.phase) {
+      // Don't merge wake/dip — each spike is its own band
+      const mergeable =
+        last &&
+        last.phase === seg.step.phase &&
+        (seg.step.phase === 'hold' ||
+          seg.step.phase === 'ramp-in' ||
+          seg.step.phase === 'ramp-out')
+      if (mergeable) {
         last.x1 = seg.x1
       } else {
-        const label =
-          seg.step.phase === 'ramp-in'
-            ? 'Ramp in (down to To)'
-            : seg.step.phase === 'hold'
-              ? 'Hold'
-              : 'Ramp out (up to Out to)'
         phaseBands.push({
           phase: seg.step.phase,
-          label,
+          label: shortPhaseLabel(seg.step.phase),
           x0: seg.x0,
           x1: seg.x1,
+          id: phaseBands.length,
         })
       }
     }
 
-    // Y-axis ticks
     const yTicks: number[] = []
     for (let hz = yMin; hz <= yMax; hz += 2) yTicks.push(hz)
-    if (!yTicks.includes(Math.round(minHz))) {
-      /* keep sparse */
-    }
 
-    // Playhead time
     let playT = 0
     if (isActive && stepIndex >= 0 && stepIndex < segments.length) {
       const seg = segments[stepIndex]
       playT = seg.t0 + Math.min(1, Math.max(0, stepProgress)) * (seg.t1 - seg.t0)
+    }
+
+    // Macro bands for bottom labels: Entry / Hold / Exit
+    const macroBands: Array<{ label: string; x0: number; x1: number }> = []
+    const firstHold = segments.find((s) => s.step.phase === 'hold' || s.step.phase === 'wake' || s.step.phase === 'dip')
+    const firstExit = segments.find((s) => s.step.phase === 'ramp-out')
+    const entrySegs = segments.filter((s) => s.step.phase === 'ramp-in')
+    if (entrySegs.length) {
+      macroBands.push({
+        label: 'Entry',
+        x0: entrySegs[0].x0,
+        x1: entrySegs[entrySegs.length - 1].x1,
+      })
+    }
+    if (firstHold) {
+      const holdEnd = firstExit ? firstExit.x0 : segments[segments.length - 1].x1
+      macroBands.push({ label: 'Hold · wakes ↑ · dips ↓', x0: firstHold.x0, x1: holdEnd })
+    }
+    if (firstExit) {
+      macroBands.push({
+        label: 'Exit',
+        x0: firstExit.x0,
+        x1: segments[segments.length - 1].x1,
+      })
     }
 
     return {
@@ -138,9 +184,9 @@ export function BeatPathChart({
       xAt,
       yAt,
       segments,
-      points,
       stepPath,
       phaseBands,
+      macroBands,
       yTicks,
       playX: isActive ? xAt(playT) : null,
       plotW,
@@ -160,6 +206,7 @@ export function BeatPathChart({
     segments,
     stepPath,
     phaseBands,
+    macroBands,
     yTicks,
     yAt,
     playX,
@@ -172,34 +219,34 @@ export function BeatPathChart({
       ? segments[stepIndex]
       : null
 
+  // Only draw dots for non-tiny hold crumbs / all event spikes
+  const visibleDots = segments.filter((seg) => {
+    if (seg.step.phase === 'wake' || seg.step.phase === 'dip') return true
+    if (seg.step.phase === 'ramp-in' || seg.step.phase === 'ramp-out') return true
+    // hold: only if relatively wide
+    return seg.x1 - seg.x0 > 4
+  })
+
   return (
     <div className="beat-path">
-      <div className="beat-path-title">Beat path · down → hold → up</div>
+      <div className="beat-path-title">Beat path · entry → hold (spikes & dips) → exit</div>
       <svg
         className="beat-path-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Beat frequency over time: ramps down to To, holds, then climbs toward Out to"
+        aria-label="Beat frequency over time with wake spikes and deep dips during hold"
       >
-        {/* Phase background bands */}
         {phaseBands.map((band) => (
           <rect
-            key={band.phase}
+            key={`band-${band.id}`}
             x={band.x0}
             y={PAD.top}
             width={Math.max(0, band.x1 - band.x0)}
             height={layout.plotH}
-            fill={
-              band.phase === 'ramp-in'
-                ? 'rgba(122, 162, 247, 0.08)'
-                : band.phase === 'hold'
-                  ? 'rgba(110, 231, 197, 0.08)'
-                  : 'rgba(199, 146, 234, 0.08)'
-            }
+            fill={phaseBandFill(band.phase)}
           />
         ))}
 
-        {/* Grid lines */}
         {yTicks.map((hz) => (
           <g key={hz}>
             <line
@@ -222,7 +269,6 @@ export function BeatPathChart({
           </g>
         ))}
 
-        {/* Step path */}
         <path
           d={stepPath}
           fill="none"
@@ -232,16 +278,16 @@ export function BeatPathChart({
           strokeLinecap="round"
         />
 
-        {/* Step dots */}
-        {segments.map((seg) => {
+        {visibleDots.map((seg) => {
           const isCurrent = currentSeg?.index === seg.index
           const isPast = isActive && seg.index < stepIndex
+          const isEvent = seg.step.phase === 'wake' || seg.step.phase === 'dip'
           return (
             <circle
               key={seg.index}
               cx={(seg.x0 + seg.x1) / 2}
               cy={seg.y}
-              r={isCurrent ? 5 : 2.5}
+              r={isCurrent ? 5 : isEvent ? 3.5 : 2.5}
               fill={phaseColor(seg.step.phase)}
               opacity={isPast ? 0.45 : 1}
               className={isCurrent ? 'beat-path-dot current' : 'beat-path-dot'}
@@ -249,7 +295,6 @@ export function BeatPathChart({
           )
         })}
 
-        {/* Current step highlight bar */}
         {currentSeg && (
           <rect
             x={currentSeg.x0}
@@ -264,7 +309,6 @@ export function BeatPathChart({
           />
         )}
 
-        {/* Playhead */}
         {playX != null && (
           <g>
             <line
@@ -282,25 +326,18 @@ export function BeatPathChart({
           </g>
         )}
 
-        {/* Phase labels */}
-        {phaseBands.map((band) => {
+        {macroBands.map((band, i) => {
           const mid = (band.x0 + band.x1) / 2
-          const wideEnough = band.x1 - band.x0 > 70
+          const wideEnough = band.x1 - band.x0 > 50
           return (
             <text
-              key={`label-${band.phase}`}
+              key={`macro-${i}`}
               x={mid}
-              y={H - 10}
+              y={H - 12}
               textAnchor="middle"
-              className={`beat-path-phase-label phase-${band.phase}`}
+              className="beat-path-phase-label"
             >
-              {wideEnough
-                ? band.label
-                : band.phase === 'ramp-in'
-                  ? '↓ Ramp in'
-                  : band.phase === 'hold'
-                    ? 'Hold'
-                    : '↑ Ramp out'}
+              {wideEnough ? band.label : band.label.split(' ')[0]}
             </text>
           )
         })}
@@ -317,22 +354,30 @@ export function BeatPathChart({
         <defs>
           <linearGradient id="beatGradient" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="var(--phase-in)" />
-            <stop offset="45%" stopColor="var(--phase-hold)" />
+            <stop offset="35%" stopColor="var(--phase-hold)" />
+            <stop offset="55%" stopColor="var(--phase-wake)" />
+            <stop offset="75%" stopColor="var(--phase-dip)" />
             <stop offset="100%" stopColor="var(--phase-out)" />
           </linearGradient>
         </defs>
 
-        {/* Invisible use of yMin/yMax to satisfy lint if needed */}
-        <title>{`Beat ${yMin}–${yMax} Hz valley`}</title>
+        <title>{`Beat ${yMin}–${yMax} Hz with wake spikes and deep dips`}</title>
       </svg>
 
       {currentSeg && (
         <div className="beat-path-now">
           Now: <strong>{formatHz(currentSeg.step.beatHz)} Hz</strong>
           <span className={`dot phase-${currentSeg.step.phase}`} />
-          {currentSeg.step.phase === 'ramp-in' && 'descending'}
+          {currentSeg.step.phase === 'ramp-in' && 'entry'}
           {currentSeg.step.phase === 'hold' && 'holding'}
-          {currentSeg.step.phase === 'ramp-out' && 'ascending'}
+          {currentSeg.step.phase === 'wake' && 'wake pulse'}
+          {currentSeg.step.phase === 'dip' && 'deep dip'}
+          {currentSeg.step.phase === 'ramp-out' && 'exit'}
+          <span className="carrier-inline">
+            · carrier {currentSeg.step.baseHz >= 1000
+              ? `${currentSeg.step.baseHz / 1000} kHz`
+              : `${currentSeg.step.baseHz} Hz`}
+          </span>
         </div>
       )}
     </div>

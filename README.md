@@ -1,19 +1,32 @@
 # kazi5isalive Auto-Ramp
 
-**Carrier-focused binaural beats** by kazi5isalive.
+**Session-program binaural beats** by kazi5isalive.
 
-Press **Start Auto-Ramp** and the session runs by itself: an optional brainwave beat ramp → hold at the target difference → optional ramp out. The default beat is a fixed 4 Hz difference.
+Press **Start Auto-Ramp** and the hero **Classic Deep Session** runs by itself:
+entry beat ramp → long hold at 4 Hz with periodic wake pulses and deep dips → optional exit.
+Carrier (base) automation is separate from the beat.
+
+## Classic Deep Session (default)
+
+| Phase | Beat | Notes |
+|-------|------|--------|
+| Entry | 10→9→…→4 (or 20→4) | ~45 s / 1 Hz step (or smooth 6-min glide) |
+| Hold | 4 Hz | ~30 min (adjustable 20–90) |
+| Wake | 4→8→4 | every ~5 min · ~30 s at 8 Hz |
+| Dip | 4→2→4 | every ~15 min · ~90 s at 2 Hz |
+| Carrier | 512→256→128 Hz | **≠ beat** — left = carrier, right = carrier + beat |
+| Exit | short ramp or gentle stop | e.g. 4→8→10 |
+
+High-carrier mode (12–14 kHz) remains available as an alternate.
 
 ## Features
 
-- Beat presets: Good (fixed target) / Fair (optional 8 Hz start) / Poor (optional 12 Hz start)
-- Explicit beat range controls: From / To / Out to (1 Hz steps, fractional endpoints supported)
-- Targets: 4 Hz, 3.8 Hz, 3.75 Hz
-- Carrier range: base 50–16,000 Hz, with prominent 12 / 13 / 14 kHz and 12–14 kHz controls; right tone = base + beat
-- **Quick Demo** — hear the full down→up journey in a few minutes
-- Beat-path visualization with live playhead
-- Adjustable step duration & hold length
-- Click-free Web Audio oscillators (stereo: L = base, R = base + beat)
+- First-class session program with interleaved wake/dip timeline
+- Beat-path chart showing hold spikes (8) and dips (2)
+- Live phase, beat, carrier, progress, and upcoming events
+- Quick Demo (compressed classic shape)
+- Manual timing / carrier / exit controls
+- Click-free Web Audio (stereo)
 - Save named configurations
 - Dark meditation UI
 

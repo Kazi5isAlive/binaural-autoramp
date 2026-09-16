@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BeatPathChart } from './components/BeatPathChart'
 import { useAutoRamp } from './hooks/useAutoRamp'
-import type { MeditatorLevel, SessionConfig } from './types'
+import type { CarrierMode, ExitMode, SessionConfig } from './types'
 import {
   BASE_HZ_MAX,
   BASE_HZ_MIN,
@@ -9,15 +9,23 @@ import {
   BEAT_HZ_MAX,
   BEAT_HZ_MIN,
   BEAT_HZ_STEP,
+  HOLD_DURATION_MAX,
+  HOLD_DURATION_MIN,
   MAX_SAVED_CONFIGS,
+  STEP_DURATION_MAX,
+  STEP_DURATION_MIN,
   TARGET_PRESETS,
 } from './types'
 import {
+  CLASSIC_CARRIER_SCHEDULE,
   DEFAULT_CONFIG,
+  formatBaseLabel,
   formatDuration,
   formatHz,
   formatScheduleSummary,
-  presetRampInStartHz,
+  HIGH_CARRIER_CONFIG,
+  loadClassicDeep,
+  phaseDisplayName,
   QUICK_DEMO_CONFIG,
   totalDuration,
 } from './utils/schedule'
@@ -27,53 +35,6 @@ import {
   upsertConfig,
 } from './utils/storage'
 import './index.css'
-
-function phaseStatusCopy(
-  phase: string,
-  currentBeatHz: number,
-  targetHz: number
-): string {
-  switch (phase) {
-    case 'ramp-in':
-      return `Stepping DOWN · ${formatHz(currentBeatHz)} Hz → heading to ${formatHz(targetHz)} Hz`
-    case 'hold':
-      return `HOLD at ${formatHz(targetHz)} Hz`
-    case 'ramp-out':
-      return `Climbing UP · ${formatHz(currentBeatHz)} Hz → toward Out to`
-    case 'done':
-      return 'Journey complete · down → hold → up'
-    case 'paused':
-      return 'Paused'
-    default:
-      return 'Ready · From → To → Out to'
-  }
-}
-
-function levelLabel(level: MeditatorLevel): string {
-  switch (level) {
-    case 'good':
-      return 'Good'
-    case 'fair':
-      return 'Fair · optional 8 Hz'
-    case 'poor':
-      return 'Poor · optional 12 Hz'
-  }
-}
-
-function levelHint(level: MeditatorLevel): string {
-  switch (level) {
-    case 'good':
-      return 'Little/no ramp-in — go to target immediately'
-    case 'fair':
-      return 'Start at 8 Hz and step down to target'
-    case 'poor':
-      return 'Start at 12 Hz and step down to target'
-  }
-}
-
-function formatBaseLabel(hz: number): string {
-  return hz >= 1000 ? `${hz / 1000} kHz` : `${hz} Hz`
-}
 
 function clampBaseHz(hz: number): number {
   if (!Number.isFinite(hz)) return BASE_HZ_MIN
@@ -85,6 +46,33 @@ function clampBeatHz(hz: number): number {
   return Math.min(BEAT_HZ_MAX, Math.max(BEAT_HZ_MIN, Number(hz.toFixed(2))))
 }
 
+function phaseStatusCopy(
+  phase: string,
+  currentBeatHz: number,
+  targetHz: number,
+  wakeHz: number,
+  dipHz: number
+): string {
+  switch (phase) {
+    case 'ramp-in':
+      return `Entry · ${formatHz(currentBeatHz)} Hz → heading to ${formatHz(targetHz)} Hz`
+    case 'hold':
+      return `Hold at ${formatHz(targetHz)} Hz`
+    case 'wake':
+      return `Wake pulse · ${formatHz(currentBeatHz)} Hz (default ${formatHz(wakeHz)})`
+    case 'dip':
+      return `Deep dip · ${formatHz(currentBeatHz)} Hz (default ${formatHz(dipHz)})`
+    case 'ramp-out':
+      return `Exit · ${formatHz(currentBeatHz)} Hz`
+    case 'done':
+      return 'Session complete'
+    case 'paused':
+      return 'Paused'
+    default:
+      return 'Classic Deep Session · load & Start Auto-Ramp'
+  }
+}
+
 export default function App() {
   const { state, start, pause, resume, stop, setVolume, previewSchedule } =
     useAutoRamp()
@@ -93,7 +81,8 @@ export default function App() {
   const [saved, setSaved] = useState<SessionConfig[]>([])
   const [saveName, setSaveName] = useState('')
   const [customBaseDraft, setCustomBaseDraft] = useState(String(DEFAULT_CONFIG.baseHz))
-  const [scheduleOpen, setScheduleOpen] = useState(true)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const sessionActive =
     state.isRunning || state.phase === 'done' || state.phase === 'paused'
@@ -117,61 +106,71 @@ export default function App() {
       ? 1 - state.stepRemainingSec / currentStepDuration
       : 0
 
-  const activeTargetHz =
-    sessionActive && state.isRunning
-      ? config.targetHz
-      : config.targetHz
-
   const update = <K extends keyof SessionConfig>(key: K, value: SessionConfig[K]) => {
-    setConfig((c) => ({ ...c, [key]: value }))
+    setConfig((c) => ({ ...c, [key]: value, programId: 'manual' }))
     if (key === 'baseHz') setCustomBaseDraft(String(value as number))
   }
 
-  const updateBeatRange = (key: 'rampInStartHz' | 'targetHz' | 'rampOutTargetHz', raw: number) => {
-    const value = clampBeatHz(raw)
-    setConfig((c) => {
-      if (key === 'rampInStartHz') {
-        const fromHz = Math.max(value, c.targetHz)
-        const outToHz = c.rampOutTargetHz === c.rampInStartHz
-          ? fromHz
-          : Math.max(c.rampOutTargetHz, c.targetHz)
-        return { ...c, rampInStartHz: fromHz, rampOutTargetHz: outToHz }
-      }
-      if (key === 'targetHz') {
-        const toHz = Math.min(value, c.rampInStartHz)
-        const outToHz = c.rampOutTargetHz === c.targetHz
-          ? toHz
-          : Math.max(c.rampOutTargetHz, toHz)
-        return { ...c, targetHz: toHz, rampOutTargetHz: outToHz }
-      }
-      return { ...c, rampOutTargetHz: Math.max(value, c.targetHz) }
-    })
-  }
-
-  const setMeditatorLevel = (level: MeditatorLevel) => {
-    setConfig((c) => {
-      const fromHz = presetRampInStartHz(level, c.targetHz)
-      const outToHz = c.rampOutTargetHz === c.rampInStartHz
-        ? fromHz
-        : Math.max(c.rampOutTargetHz, c.targetHz)
-      return { ...c, meditatorLevel: level, rampInStartHz: fromHz, rampOutTargetHz: outToHz }
-    })
+  const patch = (partial: Partial<SessionConfig>, asProgram = false) => {
+    setConfig((c) => ({
+      ...c,
+      ...partial,
+      programId: asProgram ? (partial.programId ?? 'classic-deep') : 'manual',
+    }))
+    if (partial.baseHz != null) setCustomBaseDraft(String(partial.baseHz))
   }
 
   const applyCustomBase = (raw: string) => {
     const clamped = clampBaseHz(Number(raw))
     setCustomBaseDraft(String(clamped))
-    setConfig((c) => ({ ...c, baseHz: clamped }))
+    setConfig((c) => ({ ...c, baseHz: clamped, programId: 'manual' }))
   }
 
   const handleStart = async () => {
     await start(config)
   }
 
+  const applyClassic = (experienced: boolean) => {
+    if (state.isRunning || state.isPaused) return
+    const next = loadClassicDeep(experienced)
+    setConfig(next)
+    setCustomBaseDraft(String(next.baseHz))
+  }
+
   const applyQuickDemo = () => {
     if (state.isRunning || state.isPaused) return
-    setConfig({ ...QUICK_DEMO_CONFIG })
+    setConfig({ ...QUICK_DEMO_CONFIG, carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE] })
     setCustomBaseDraft(String(QUICK_DEMO_CONFIG.baseHz))
+  }
+
+  const applyHighCarrier = () => {
+    if (state.isRunning || state.isPaused) return
+    setConfig({ ...HIGH_CARRIER_CONFIG })
+    setCustomBaseDraft(String(HIGH_CARRIER_CONFIG.baseHz))
+  }
+
+  const setCarrierMode = (mode: CarrierMode) => {
+    if (mode === 'classic') {
+      patch(
+        {
+          carrierMode: 'classic',
+          baseHz: 512,
+          carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE],
+        },
+        true
+      )
+    } else if (mode === 'high') {
+      patch({
+        carrierMode: 'high',
+        baseHz: 12000,
+        carrierSchedule: [],
+      })
+    } else {
+      patch({
+        carrierMode: 'fixed',
+        carrierSchedule: [],
+      })
+    }
   }
 
   const handleSave = () => {
@@ -193,10 +192,25 @@ export default function App() {
 
   const locked = state.isRunning || state.isPaused
 
+  const wakeCount = schedule.filter((s) => s.phase === 'wake').length
+  const dipCount = schedule.filter((s) => s.phase === 'dip').length
+  const displayCarrier =
+    sessionActive && state.currentBaseHz > 0
+      ? state.currentBaseHz
+      : schedule[0]?.baseHz ?? config.baseHz
+
+  const badgePhase =
+    state.phase === 'wake'
+      ? 'wake'
+      : state.phase === 'dip'
+        ? 'dip'
+        : state.phase
+
   return (
     <div className="app">
       <header className="app-header">
         <h1>kazi5isalive Auto-Ramp</h1>
+        <p className="tagline">Session programs · binaural beat ≠ carrier</p>
       </header>
 
       <div className="headphones-banner" role="status">
@@ -204,37 +218,113 @@ export default function App() {
           🎧
         </span>
         <span>
-          <strong>Stereo headphones required.</strong> Left ear = base frequency;
-          right ear = base + beat. Use wired or reliable wireless stereo.
+          <strong>Stereo headphones required.</strong> Left ear = carrier (base);
+          right ear = carrier + beat. Beat is the difference; carrier is the tone pair.
         </span>
       </div>
+
+      {/* Hero program */}
+      <section className={`card hero-card ${locked ? 'locked' : ''}`}>
+        <div className="hero-badge">Session program</div>
+        <h2 className="hero-title">Classic Deep Session</h2>
+        <p className="hero-blurb">
+          One Start runs the full path: entry ramp → long hold at 4 Hz with periodic
+          wake pulses (↑8 Hz) and deep dips (↓2 Hz) → optional exit. Carrier steps
+          512 → 256 → 128 Hz separately from the beat.
+        </p>
+        <ul className="hero-specs">
+          <li>
+            <strong>Entry</strong> 10→4 (or 20→4) · {formatDuration(config.stepDurationSec)}/step
+          </li>
+          <li>
+            <strong>Hold</strong> {formatDuration(config.holdDurationSec)} at {formatHz(config.targetHz)} Hz
+          </li>
+          <li>
+            <strong>Wake</strong> every {formatDuration(config.wakeIntervalSec)} · {formatHz(config.wakeHz)} Hz ×{' '}
+            {formatDuration(config.wakeDurationSec)}
+          </li>
+          <li>
+            <strong>Dip</strong> every {formatDuration(config.dipIntervalSec)} · {formatHz(config.dipHz)} Hz ×{' '}
+            {formatDuration(config.dipDurationSec)}
+          </li>
+          <li>
+            <strong>Carrier</strong> 512 → 256 → 128 Hz (not the beat)
+          </li>
+        </ul>
+        <div className="hero-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={locked}
+            onClick={() => applyClassic(true)}
+          >
+            Load Classic (10→4)
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={locked}
+            onClick={() => applyClassic(false)}
+          >
+            Longer entry (20→4)
+          </button>
+          <button
+            type="button"
+            className="btn btn-demo"
+            disabled={locked}
+            onClick={applyQuickDemo}
+            title="Compressed classic shape for a quick listen"
+          >
+            Quick Demo
+          </button>
+        </div>
+        <p className="hint" style={{ marginTop: '0.75rem' }}>
+          Loaded preset · est. <strong className="accent">{formatDuration(estTotal)}</strong>
+          {' · '}
+          {wakeCount} wakes · {dipCount} dips · {formatScheduleSummary(schedule)}
+        </p>
+      </section>
 
       {/* Live session monitor */}
       <section className="card monitor" aria-live="polite">
         <h2>Session</h2>
-        <div className={`phase-badge ${state.phase}`}>
-          {state.phase === 'ramp-in'
-            ? 'Ramp In · DOWN'
-            : state.phase === 'hold'
-              ? 'Hold'
-              : state.phase === 'ramp-out'
-                ? 'Ramp Out · UP'
-                : state.phase === 'done'
-                  ? 'Done'
-                  : state.phase === 'paused'
-                    ? 'Paused'
-                    : 'Ready'}
+        <div className={`phase-badge ${badgePhase}`}>
+          {phaseDisplayName(
+            state.phase === 'wake'
+              ? 'wake'
+              : state.phase === 'dip'
+                ? 'dip'
+                : state.phase
+          )}
+          {state.phase === 'wake' && config.wakeHz !== 8
+            ? ` · ${formatHz(state.currentBeatHz)}`
+            : ''}
+          {state.phase === 'dip' && config.dipHz !== 2
+            ? ` · ${formatHz(state.currentBeatHz)}`
+            : ''}
         </div>
 
         <p className="phase-status">
-          {phaseStatusCopy(state.phase, state.currentBeatHz, activeTargetHz)}
+          {phaseStatusCopy(
+            state.phase,
+            state.currentBeatHz,
+            config.targetHz,
+            config.wakeHz,
+            config.dipHz
+          )}
         </p>
 
         {(state.isRunning || state.phase === 'done' || state.phase === 'paused') && (
           <>
-            <div className="beat-display">
-              {formatHz(state.currentBeatHz)}
-              <span className="unit">Hz beat</span>
+            <div className="live-metrics">
+              <div className="beat-display">
+                {formatHz(state.currentBeatHz)}
+                <span className="unit">Hz beat</span>
+              </div>
+              <div className="carrier-display">
+                {formatBaseLabel(displayCarrier)}
+                <span className="unit">carrier</span>
+              </div>
             </div>
             <div className="countdown">
               Step{' '}
@@ -245,6 +335,9 @@ export default function App() {
               Remaining this step:{' '}
               <strong>{formatDuration(state.stepRemainingSec)}</strong>
             </div>
+            {state.upcomingLabel && (
+              <p className="upcoming">{state.upcomingLabel}</p>
+            )}
             <div className="progress-bar" role="progressbar" aria-valuenow={progressPct}>
               <div className="fill" style={{ width: `${progressPct}%` }} />
             </div>
@@ -257,28 +350,16 @@ export default function App() {
 
         {!sessionActive && state.phase === 'idle' && (
           <p className="idle-blurb">
-            Configure below, or hit <strong>Quick Demo</strong> to hear the full
-            down→up journey in a few minutes. Est.{' '}
+            Load <strong>Classic Deep Session</strong> above, then hit Start. Est.{' '}
             <strong className="accent">{formatDuration(estTotal)}</strong>
           </p>
         )}
 
         <div className="controls">
           {!state.isRunning && state.phase !== 'paused' && (
-            <>
-              <button className="btn btn-primary" onClick={handleStart}>
-                {state.phase === 'done' ? 'Start Again' : 'Start Auto-Ramp'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-demo"
-                disabled={locked}
-                onClick={applyQuickDemo}
-                title="Load short 8 Hz→4 Hz→8 Hz session"
-              >
-                Quick Demo
-              </button>
-            </>
+            <button className="btn btn-primary" onClick={handleStart}>
+              {state.phase === 'done' ? 'Start Again' : 'Start Auto-Ramp'}
+            </button>
           )}
           {state.isRunning && !state.isPaused && (
             <>
@@ -306,13 +387,6 @@ export default function App() {
             </button>
           )}
         </div>
-
-        {!sessionActive && (
-          <p className="demo-hint">
-            <strong>Quick Demo</strong> = start 8 Hz → down to 4 Hz → hold ~1 min →
-            climb to 8 Hz (short steps so you can hear it).
-          </p>
-        )}
       </section>
 
       {/* Beat path visualization */}
@@ -325,7 +399,8 @@ export default function App() {
           isActive={sessionActive && state.phase !== 'done'}
         />
         <p className="hint path-hint">
-          Valley shape: ramp in (down to To) → hold → ramp out (up to Out to).
+          Hold shows upward wake spikes and downward deep dips. Carrier changes are
+          separate from this beat path.
         </p>
       </section>
 
@@ -339,7 +414,8 @@ export default function App() {
         >
           <h2>Schedule steps</h2>
           <span className="schedule-toggle-meta">
-            {formatScheduleSummary(schedule)} · {scheduleOpen ? '▾' : '▸'}
+            {schedule.length} steps · {formatScheduleSummary(schedule)} ·{' '}
+            {scheduleOpen ? '▾' : '▸'}
           </span>
         </button>
         {scheduleOpen && (
@@ -352,9 +428,12 @@ export default function App() {
                   key={`${step.phase}-${i}-${step.beatHz}`}
                   role="listitem"
                   className={`schedule-chip phase-${step.phase}${isCurrent ? ' current' : ''}${isPast ? ' past' : ''}`}
-                  title={`${step.phase}: ${formatHz(step.beatHz)} Hz · ${formatDuration(step.durationSec)}`}
+                  title={`${step.phase}: ${formatHz(step.beatHz)} Hz beat · carrier ${formatBaseLabel(step.baseHz)} · ${formatDuration(step.durationSec)}`}
                 >
                   {formatHz(step.beatHz)}
+                  {(step.phase === 'wake' || step.phase === 'dip') && (
+                    <em className="chip-tag">{step.phase}</em>
+                  )}
                 </span>
               )
             })}
@@ -362,37 +441,40 @@ export default function App() {
         )}
       </section>
 
-      {/* Configuration — locked while running */}
+      {/* Program timing */}
       <section className={`card ${locked ? 'locked' : ''}`}>
-        <h2>Meditator Preset</h2>
+        <h2>Entry & hold</h2>
         <div className="field">
-          <div className="segmented meditator-segmented" role="group" aria-label="Meditator level">
-            {(['good', 'fair', 'poor'] as MeditatorLevel[]).map((level) => (
+          <label>Entry start (beat Hz)</label>
+          <div className="segmented">
+            {[10, 20].map((hz) => (
               <button
-                key={level}
+                key={hz}
                 type="button"
-                className={config.meditatorLevel === level ? 'active' : ''}
+                className={config.rampInStartHz === hz ? 'active' : ''}
                 disabled={locked}
-                onClick={() => setMeditatorLevel(level)}
+                onClick={() =>
+                  patch({
+                    rampInStartHz: hz,
+                    rampOutTargetHz: Math.max(config.rampOutTargetHz, hz > 10 ? 10 : config.rampOutTargetHz),
+                  })
+                }
               >
-                {levelLabel(level)}
+                {hz} → {formatHz(config.targetHz)}
               </button>
             ))}
+            <button
+              type="button"
+              className={
+                config.rampInStartHz !== 10 && config.rampInStartHz !== 20 ? 'active' : ''
+              }
+              disabled={locked}
+              onClick={() => patch({ rampInStartHz: clampBeatHz(config.rampInStartHz) })}
+            >
+              Custom
+            </button>
           </div>
-          <p className="hint">{levelHint(config.meditatorLevel)}</p>
         </div>
-        <p className="hint">
-          Good keeps the beat fixed at To. Fair and Poor add an optional brainwave-band
-          ramp before the hold; adjust the range below as needed.
-        </p>
-      </section>
-
-      <section className={`card ${locked ? 'locked' : ''}`}>
-        <h2>Beat range (brainwave difference)</h2>
-        <p className="range-description">
-          This is the left/right frequency difference: From → To, hold at To, then ramp
-          toward Out to. The carrier tones are set separately below.
-        </p>
         <div className="range-fields">
           <div className="range-field">
             <label htmlFor="beat-from">From (Hz)</label>
@@ -404,12 +486,16 @@ export default function App() {
               step={BEAT_HZ_STEP}
               value={config.rampInStartHz}
               disabled={locked}
-              onChange={(e) => updateBeatRange('rampInStartHz', Number(e.target.value))}
+              onChange={(e) =>
+                patch({
+                  rampInStartHz: Math.max(clampBeatHz(Number(e.target.value)), config.targetHz),
+                })
+              }
             />
-            <span>ramp-in start</span>
+            <span>entry start</span>
           </div>
           <div className="range-field">
-            <label htmlFor="beat-to">To (Hz)</label>
+            <label htmlFor="beat-to">Hold (Hz)</label>
             <input
               id="beat-to"
               type="number"
@@ -418,12 +504,19 @@ export default function App() {
               step={BEAT_HZ_STEP}
               value={config.targetHz}
               disabled={locked}
-              onChange={(e) => updateBeatRange('targetHz', Number(e.target.value))}
+              onChange={(e) => {
+                const toHz = clampBeatHz(Number(e.target.value))
+                patch({
+                  targetHz: toHz,
+                  rampInStartHz: Math.max(config.rampInStartHz, toHz),
+                  rampOutTargetHz: Math.max(config.rampOutTargetHz, toHz),
+                })
+              }}
             />
-            <span>valley / hold</span>
+            <span>valley</span>
           </div>
           <div className="range-field">
-            <label htmlFor="beat-out-to">Out to (Hz)</label>
+            <label htmlFor="beat-out-to">Exit to (Hz)</label>
             <input
               id="beat-out-to"
               type="number"
@@ -432,13 +525,17 @@ export default function App() {
               step={BEAT_HZ_STEP}
               value={config.rampOutTargetHz}
               disabled={locked}
-              onChange={(e) => updateBeatRange('rampOutTargetHz', Number(e.target.value))}
+              onChange={(e) =>
+                patch({
+                  rampOutTargetHz: Math.max(clampBeatHz(Number(e.target.value)), config.targetHz),
+                })
+              }
             />
             <span>ramp-out end</span>
           </div>
         </div>
         <div className="field range-presets">
-          <label>To presets</label>
+          <label>Hold presets</label>
           <div className="segmented">
             {TARGET_PRESETS.map((hz) => (
               <button
@@ -446,156 +543,411 @@ export default function App() {
                 type="button"
                 className={config.targetHz === hz ? 'active' : ''}
                 disabled={locked}
-                onClick={() => updateBeatRange('targetHz', hz)}
+                onClick={() =>
+                  patch({
+                    targetHz: hz,
+                    rampInStartHz: Math.max(config.rampInStartHz, hz),
+                    rampOutTargetHz: Math.max(config.rampOutTargetHz, hz),
+                  })
+                }
               >
                 {formatHz(hz)} Hz
               </button>
             ))}
           </div>
         </div>
-        <p className="hint">
-          Auto-ramp advances in 1 Hz steps and preserves fractional endpoints such as 3.8
-          and 3.75. Default is a fixed 4 Hz beat; choose Fair/Poor or set From/Out to for
-          an optional ramp.
-        </p>
-      </section>
-
-      <section className={`card ${locked ? 'locked' : ''}`}>
-        <h2>Carrier range</h2>
-        <p className="range-description">
-          Carrier (binaural tones): left ear = base; right ear = base + the beat above.
-          Choose the carrier here, with high carriers emphasized.
-        </p>
-        <div className="field carrier-high-band">
-          <label>High carrier presets</label>
+        <div className="field">
+          <label>Entry mode</label>
           <div className="segmented">
-            {[12000, 13000, 14000].map((hz) => (
-              <button
-                key={hz}
-                type="button"
-                className={config.baseHz === hz ? 'active' : ''}
-                disabled={locked}
-                onClick={() => update('baseHz', hz)}
-              >
-                {formatBaseLabel(hz)}
-              </button>
-            ))}
             <button
               type="button"
-              className={config.baseHz >= 12000 && config.baseHz <= 14000 ? 'active' : ''}
+              className={config.entryMode === 'stepped' ? 'active' : ''}
               disabled={locked}
-              onClick={() => update('baseHz', 12000)}
+              onClick={() => patch({ entryMode: 'stepped' })}
             >
-              12–14 kHz band
+              Stepped (1 Hz)
+            </button>
+            <button
+              type="button"
+              className={config.entryMode === 'smooth-glide' ? 'active' : ''}
+              disabled={locked}
+              onClick={() => patch({ entryMode: 'smooth-glide', glideDurationSec: 6 * 60 })}
+            >
+              Smooth 6-min glide
             </button>
           </div>
         </div>
-        <div className="field carrier-band-picker">
-          <label htmlFor="high-carrier-band">12–14 kHz band picker</label>
-          <input
-            id="high-carrier-band"
-            type="range"
-            min={12000}
-            max={14000}
-            step={100}
-            value={Math.min(14000, Math.max(12000, config.baseHz))}
-            disabled={locked}
-            onChange={(e) => update('baseHz', Number(e.target.value))}
-          />
-          <div className="carrier-band-values"><span>12 kHz</span><strong>{formatBaseLabel(Math.min(14000, Math.max(12000, config.baseHz)))}</strong><span>14 kHz</span></div>
-        </div>
         <div className="field">
-          <label>Carrier base (Hz)</label>
-          <div className="base-groups">
-            {BASE_PRESET_GROUPS.map((group) => (
-              <div key={group.label} className="base-group">
-                <div className="base-group-label">{group.label}</div>
-                <div className="segmented">
-                  {group.presets.map((hz) => (
-                    <button
-                      key={hz}
-                      type="button"
-                      className={config.baseHz === hz ? 'active' : ''}
-                      disabled={locked}
-                      onClick={() => update('baseHz', hz)}
-                    >
-                      {formatBaseLabel(hz)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="custom-base-row">
-            <label htmlFor="custom-base-hz">Custom base (Hz)</label>
-            <input
-              id="custom-base-hz"
-              type="number"
-              min={BASE_HZ_MIN}
-              max={BASE_HZ_MAX}
-              step={1}
-              value={customBaseDraft}
-              disabled={locked}
-              onChange={(e) => setCustomBaseDraft(e.target.value)}
-              onBlur={(e) => applyCustomBase(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur()
-              }}
-            />
-            <span className="custom-base-range">
-              {BASE_HZ_MIN}–{BASE_HZ_MAX} Hz
-            </span>
-          </div>
-          <p className="hint">
-            To clearly hear the beat rise and fall, try base <strong>100–500 Hz</strong>{' '}
-            first. High carriers (8–16 kHz) may be hard to hear as tones — the beat still
-            forms, but Mid/Low make the down→up journey easier to perceive.
-          </p>
-        </div>
-      </section>
-
-      <section className={`card ${locked ? 'locked' : ''}`}>
-        <h2>Timing</h2>
-        <div className="field">
-          <label>Step duration (ramp-in)</label>
+          <label>Step duration (entry)</label>
           <div className="slider-row">
             <input
               type="range"
-              min={5}
-              max={180}
-              step={1}
+              min={STEP_DURATION_MIN}
+              max={STEP_DURATION_MAX}
+              step={5}
               value={config.stepDurationSec}
-              disabled={locked}
-              onChange={(e) => update('stepDurationSec', Number(e.target.value))}
+              disabled={locked || config.entryMode === 'smooth-glide'}
+              onChange={(e) => patch({ stepDurationSec: Number(e.target.value) })}
             />
             <span className="value">{formatDuration(config.stepDurationSec)}</span>
           </div>
-          <p className="hint">
-            5 s – 3 min per 1 Hz step. Ramp-out uses shorter steps automatically.
-            Use ~8–15 s for a quick hearable demo.
-          </p>
+          <p className="hint">30 s – 3 min per 1 Hz step (default ~45–60 s).</p>
         </div>
         <div className="field">
-          <label>Hold at target</label>
+          <label>Hold length</label>
           <div className="slider-row">
             <input
               type="range"
-              min={30}
-              max={2 * 60 * 60}
-              step={30}
-              value={config.holdDurationSec}
+              min={HOLD_DURATION_MIN}
+              max={HOLD_DURATION_MAX}
+              step={60}
+              value={Math.min(HOLD_DURATION_MAX, Math.max(HOLD_DURATION_MIN, config.holdDurationSec))}
               disabled={locked}
-              onChange={(e) => update('holdDurationSec', Number(e.target.value))}
+              onChange={(e) => patch({ holdDurationSec: Number(e.target.value) })}
             />
             <span className="value">{formatDuration(config.holdDurationSec)}</span>
           </div>
-          <p className="hint">30 s – 2 hr at target theta. Full sessions often use 30–60 min.</p>
+          <p className="hint">20–90 min at hold beat (default 30).</p>
         </div>
-        <div className="schedule-preview">
-          Auto schedule: {schedule.filter((s) => s.phase === 'ramp-in').length} ramp-in ·{' '}
-          1 hold · {schedule.filter((s) => s.phase === 'ramp-out').length} ramp-out · total{' '}
-          {formatDuration(estTotal)}
+      </section>
+
+      {/* Wake & dip */}
+      <section className={`card ${locked ? 'locked' : ''}`}>
+        <h2>Wake pulses & deep dips</h2>
+        <div className="field">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={config.wakeEnabled}
+              disabled={locked}
+              onChange={(e) => patch({ wakeEnabled: e.target.checked })}
+            />
+            Wake pulses during hold (4 → {formatHz(config.wakeHz)} → 4)
+          </label>
         </div>
+        {config.wakeEnabled && (
+          <>
+            <div className="field">
+              <label>Wake interval</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={60}
+                  max={15 * 60}
+                  step={30}
+                  value={config.wakeIntervalSec}
+                  disabled={locked}
+                  onChange={(e) => patch({ wakeIntervalSec: Number(e.target.value) })}
+                />
+                <span className="value">{formatDuration(config.wakeIntervalSec)}</span>
+              </div>
+            </div>
+            <div className="field">
+              <label>Wake beat (Hz)</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={5}
+                  max={12}
+                  step={0.5}
+                  value={config.wakeHz}
+                  disabled={locked}
+                  onChange={(e) => patch({ wakeHz: Number(e.target.value) })}
+                />
+                <span className="value">{formatHz(config.wakeHz)} Hz</span>
+              </div>
+            </div>
+            <div className="field">
+              <label>Wake duration</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={10}
+                  max={90}
+                  step={5}
+                  value={config.wakeDurationSec}
+                  disabled={locked}
+                  onChange={(e) => patch({ wakeDurationSec: Number(e.target.value) })}
+                />
+                <span className="value">{formatDuration(config.wakeDurationSec)}</span>
+              </div>
+            </div>
+          </>
+        )}
+        <div className="field">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={config.dipEnabled}
+              disabled={locked}
+              onChange={(e) => patch({ dipEnabled: e.target.checked })}
+            />
+            Deep dips during hold (4 → {formatHz(config.dipHz)} → 4)
+          </label>
+        </div>
+        {config.dipEnabled && (
+          <>
+            <div className="field">
+              <label>Dip cadence</label>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={config.dipMode === 'every-n-minutes' ? 'active' : ''}
+                  disabled={locked}
+                  onClick={() => patch({ dipMode: 'every-n-minutes' })}
+                >
+                  Every N minutes
+                </button>
+                <button
+                  type="button"
+                  className={config.dipMode === 'every-n-wakes' ? 'active' : ''}
+                  disabled={locked}
+                  onClick={() => patch({ dipMode: 'every-n-wakes' })}
+                >
+                  Every Nth wake
+                </button>
+              </div>
+            </div>
+            {config.dipMode === 'every-n-minutes' ? (
+              <div className="field">
+                <label>Dip interval</label>
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={5 * 60}
+                    max={30 * 60}
+                    step={60}
+                    value={config.dipIntervalSec}
+                    disabled={locked}
+                    onChange={(e) => patch({ dipIntervalSec: Number(e.target.value) })}
+                  />
+                  <span className="value">{formatDuration(config.dipIntervalSec)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="field">
+                <label>Every Nth wake becomes a dip</label>
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={2}
+                    max={5}
+                    step={1}
+                    value={config.dipEveryNWakes}
+                    disabled={locked}
+                    onChange={(e) => patch({ dipEveryNWakes: Number(e.target.value) })}
+                  />
+                  <span className="value">every {config.dipEveryNWakes}</span>
+                </div>
+              </div>
+            )}
+            <div className="field">
+              <label>Dip beat (Hz)</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={1}
+                  max={3.5}
+                  step={0.25}
+                  value={config.dipHz}
+                  disabled={locked}
+                  onChange={(e) => patch({ dipHz: Number(e.target.value) })}
+                />
+                <span className="value">{formatHz(config.dipHz)} Hz</span>
+              </div>
+            </div>
+            <div className="field">
+              <label>Dip duration</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={30}
+                  max={120}
+                  step={5}
+                  value={config.dipDurationSec}
+                  disabled={locked}
+                  onChange={(e) => patch({ dipDurationSec: Number(e.target.value) })}
+                />
+                <span className="value">{formatDuration(config.dipDurationSec)}</span>
+              </div>
+              <p className="hint">Typically 60–90 s at the deep beat.</p>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* Carrier */}
+      <section className={`card ${locked ? 'locked' : ''}`}>
+        <h2>Carrier (base) — not the beat</h2>
+        <p className="range-description">
+          Carrier is the tone pair under the beat. Left = carrier; right = carrier + beat.
+          Classic Deep Session automates 512 → 256 → 128 Hz across the session. High
+          (12–14 kHz) remains available as an alternate mode.
+        </p>
+        <div className="field">
+          <label>Carrier mode</label>
+          <div className="segmented">
+            {(
+              [
+                ['classic', 'Classic 512/256/128'],
+                ['high', 'High 12–14 kHz'],
+                ['fixed', 'Fixed'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={config.carrierMode === mode ? 'active' : ''}
+                disabled={locked}
+                onClick={() => setCarrierMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {config.carrierMode === 'classic' && (
+          <div className="carrier-schedule-preview">
+            {CLASSIC_CARRIER_SCHEDULE.map((cue) => (
+              <span key={`${cue.baseHz}-${cue.atPhase}`} className="carrier-cue">
+                {formatBaseLabel(cue.baseHz)}
+                <em>{cue.atPhase}</em>
+              </span>
+            ))}
+          </div>
+        )}
+        {config.carrierMode === 'high' && (
+          <>
+            <div className="field carrier-high-band">
+              <label>High carrier presets</label>
+              <div className="segmented">
+                {[12000, 13000, 14000].map((hz) => (
+                  <button
+                    key={hz}
+                    type="button"
+                    className={config.baseHz === hz ? 'active' : ''}
+                    disabled={locked}
+                    onClick={() => update('baseHz', hz)}
+                  >
+                    {formatBaseLabel(hz)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field carrier-band-picker">
+              <label htmlFor="high-carrier-band">12–14 kHz band</label>
+              <input
+                id="high-carrier-band"
+                type="range"
+                min={12000}
+                max={14000}
+                step={100}
+                value={Math.min(14000, Math.max(12000, config.baseHz))}
+                disabled={locked}
+                onChange={(e) => update('baseHz', Number(e.target.value))}
+              />
+              <div className="carrier-band-values">
+                <span>12 kHz</span>
+                <strong>{formatBaseLabel(Math.min(14000, Math.max(12000, config.baseHz)))}</strong>
+                <span>14 kHz</span>
+              </div>
+            </div>
+          </>
+        )}
+        {(config.carrierMode === 'fixed' || advancedOpen) && (
+          <div className="field">
+            <label>Carrier base (Hz)</label>
+            <div className="base-groups">
+              {BASE_PRESET_GROUPS.map((group) => (
+                <div key={group.label} className="base-group">
+                  <div className="base-group-label">{group.label}</div>
+                  <div className="segmented">
+                    {group.presets.map((hz) => (
+                      <button
+                        key={hz}
+                        type="button"
+                        className={config.baseHz === hz ? 'active' : ''}
+                        disabled={locked}
+                        onClick={() => {
+                          update('baseHz', hz)
+                          if (config.carrierMode === 'classic') {
+                            patch({ carrierMode: 'fixed', baseHz: hz, carrierSchedule: [] })
+                          }
+                        }}
+                      >
+                        {formatBaseLabel(hz)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="custom-base-row">
+              <label htmlFor="custom-base-hz">Custom base (Hz)</label>
+              <input
+                id="custom-base-hz"
+                type="number"
+                min={BASE_HZ_MIN}
+                max={BASE_HZ_MAX}
+                step={1}
+                value={customBaseDraft}
+                disabled={locked}
+                onChange={(e) => setCustomBaseDraft(e.target.value)}
+                onBlur={(e) => applyCustomBase(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                }}
+              />
+              <span className="custom-base-range">
+                {BASE_HZ_MIN}–{BASE_HZ_MAX} Hz
+              </span>
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          className="linkish"
+          onClick={() => setAdvancedOpen((o) => !o)}
+        >
+          {advancedOpen ? 'Hide' : 'Show'} manual carrier presets
+        </button>
+        <div className="field" style={{ marginTop: '0.75rem' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={locked}
+            onClick={applyHighCarrier}
+          >
+            Load high-carrier alternate
+          </button>
+        </div>
+      </section>
+
+      {/* Exit */}
+      <section className={`card ${locked ? 'locked' : ''}`}>
+        <h2>Exit</h2>
+        <div className="segmented">
+          {(
+            [
+              ['gentle-stop', 'Gentle stop at hold'],
+              ['short-ramp', 'Short ramp (e.g. 4→8→10)'],
+              ['full-ramp', 'Full step-up'],
+            ] as Array<[ExitMode, string]>
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className={config.exitMode === mode ? 'active' : ''}
+              disabled={locked}
+              onClick={() => patch({ exitMode: mode })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="hint" style={{ marginTop: '0.5rem' }}>
+          Short ramp is shorter than entry. Full ramp climbs 1 Hz at a time to Exit to.
+        </p>
       </section>
 
       <section className="card">
@@ -610,7 +962,7 @@ export default function App() {
               value={config.volume}
               onChange={(e) => {
                 const v = Number(e.target.value)
-                update('volume', v)
+                setConfig((c) => ({ ...c, volume: v }))
                 if (state.isRunning) setVolume(v)
               }}
             />
@@ -636,9 +988,11 @@ export default function App() {
               <div>
                 <div className="name">{c.name}</div>
                 <div className="meta">
-                  {levelLabel(c.meditatorLevel)} · {formatHz(c.rampInStartHz)} →{' '}
-                  {formatHz(c.targetHz)} → {formatHz(c.rampOutTargetHz)} Hz · base {formatBaseLabel(c.baseHz)} · hold{' '}
-                  {formatDuration(c.holdDurationSec)}
+                  {formatHz(c.rampInStartHz)}→{formatHz(c.targetHz)} · hold{' '}
+                  {formatDuration(c.holdDurationSec)} ·{' '}
+                  {c.carrierMode === 'classic'
+                    ? 'carrier auto'
+                    : formatBaseLabel(c.baseHz)}
                 </div>
               </div>
               <button

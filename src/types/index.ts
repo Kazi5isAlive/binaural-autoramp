@@ -1,30 +1,89 @@
-export type MeditatorLevel = 'good' | 'fair' | 'poor'
-export type Phase = 'idle' | 'ramp-in' | 'hold' | 'ramp-out' | 'done' | 'paused'
+export type StepPhase = 'ramp-in' | 'hold' | 'wake' | 'dip' | 'ramp-out'
+export type Phase = 'idle' | StepPhase | 'done' | 'paused'
+
+/** How the entry beat descends to the hold target. */
+export type EntryMode = 'stepped' | 'smooth-glide'
+
+/** Carrier automation vs a single fixed base. */
+export type CarrierMode = 'classic' | 'high' | 'fixed'
+
+/** How to leave the hold. */
+export type ExitMode = 'gentle-stop' | 'short-ramp' | 'full-ramp'
+
+/** Dip cadence relative to wake pulses or wall-clock. */
+export type DipMode = 'every-n-wakes' | 'every-n-minutes'
+
+/**
+ * Carrier cue — carrier ≠ beat.
+ * `atTimeSec` is absolute session time; `atPhase` resolves when the schedule is built.
+ */
+export interface CarrierCue {
+  baseHz: number
+  atTimeSec?: number
+  atPhase?: 'entry' | 'hold' | 'deep-hold' | 'exit'
+}
 
 export interface SessionConfig {
   name: string
-  meditatorLevel: MeditatorLevel
-  /** Beat journey start (From): stepped down to target. */
+  /** Hero program vs freeform manual tweaks (same engine). */
+  programId: 'classic-deep' | 'manual'
+
+  /** Entry ramp start beat (experienced ~10, less-experienced ~20). */
   rampInStartHz: number
-  /** Beat journey valley (To): held before ramping out. */
+  /** Hold / valley beat frequency. */
   targetHz: number
-  /** Beat journey end target; defaults to the From value. */
+  /** Exit ramp end beat (when exitMode ramps up). */
   rampOutTargetHz: number
-  baseHz: number
+  entryMode: EntryMode
+  /** Seconds per 1 Hz entry step (30–180). Ignored for smooth-glide. */
   stepDurationSec: number
+  /** Smooth glide duration when entryMode is smooth-glide (default 360). */
+  glideDurationSec: number
+
+  /** Main hold length at targetHz. */
   holdDurationSec: number
+
+  wakeEnabled: boolean
+  /** Seconds between wake pulse starts during hold. */
+  wakeIntervalSec: number
+  wakeHz: number
+  wakeDurationSec: number
+
+  dipEnabled: boolean
+  dipMode: DipMode
+  /** When dipMode is every-n-wakes (e.g. 3 = every 3rd wake becomes a dip). */
+  dipEveryNWakes: number
+  /** When dipMode is every-n-minutes. */
+  dipIntervalSec: number
+  dipHz: number
+  dipDurationSec: number
+
+  carrierMode: CarrierMode
+  /**
+   * Fixed / high-mode carrier. Classic mode uses carrierSchedule instead,
+   * but baseHz still seeds the first cue if the schedule is empty.
+   */
+  baseHz: number
+  /** Classic carrier automation: 512 → 256 → 128 by default. */
+  carrierSchedule: CarrierCue[]
+
+  exitMode: ExitMode
   volume: number
 }
 
 export interface ScheduleStep {
   beatHz: number
   durationSec: number
-  phase: 'ramp-in' | 'hold' | 'ramp-out'
+  phase: StepPhase
+  /** Carrier (base) in effect for this step. Carrier ≠ beat. */
+  baseHz: number
+  label?: string
 }
 
 export interface SessionState {
   phase: Phase
   currentBeatHz: number
+  currentBaseHz: number
   stepIndex: number
   totalSteps: number
   stepRemainingSec: number
@@ -33,6 +92,8 @@ export interface SessionState {
   totalDurationSec: number
   isRunning: boolean
   isPaused: boolean
+  /** Short label for the next wake/dip/exit after the current step. */
+  upcomingLabel: string
 }
 
 export const TARGET_PRESETS = [4, 3.8, 3.75] as const
@@ -46,10 +107,6 @@ export const BEAT_HZ_MIN = 0.5
 export const BEAT_HZ_MAX = 40
 export const BEAT_HZ_STEP = 0.05
 
-/** Backward-compatible names for older callers. */
-export const RAMP_IN_START_MIN = BEAT_HZ_MIN
-export const RAMP_IN_START_MAX = BEAT_HZ_MAX
-
 /**
  * Carrier presets grouped Low / Mid / High.
  * High (8–16 kHz) may be inaudible as pure tones for many adults;
@@ -59,7 +116,7 @@ export const BASE_PRESET_GROUPS: ReadonlyArray<{
   label: string
   presets: readonly number[]
 }> = [
-  { label: 'Low', presets: [100, 500] },
+  { label: 'Low', presets: [100, 128, 256, 500, 512] },
   { label: 'Mid', presets: [2000, 5000] },
   { label: 'High', presets: [8000, 10000, 12000, 13000, 14000, 15000, 16000] },
 ]
@@ -70,3 +127,8 @@ export const BASE_PRESETS = BASE_PRESET_GROUPS.flatMap((g) => [...g.presets]) as
 export const RAMP_OUT_STEP_FACTOR = 0.4 // steeper = shorter steps
 export const MAX_SAVED_CONFIGS = 5
 export const STORAGE_KEY = 'binaural-autoramp-configs'
+
+export const STEP_DURATION_MIN = 30
+export const STEP_DURATION_MAX = 180
+export const HOLD_DURATION_MIN = 20 * 60
+export const HOLD_DURATION_MAX = 90 * 60
