@@ -435,6 +435,72 @@ header.app-header .tagline {
   pointer-events: none;
 }
 
+
+/* Base frequency groups (Low / Mid / High) */
+.base-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.base-group-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.base-group .segmented button {
+  flex: 0 1 auto;
+  min-width: 4.25rem;
+}
+
+.custom-base-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.custom-base-row label {
+  margin-bottom: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.custom-base-row input[type='number'] {
+  width: 7.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.custom-base-row input[type='number']:focus {
+  border-color: var(--accent);
+}
+
+.custom-base-row input[type='number']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.custom-base-range {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.locked .custom-base-row input {
+  pointer-events: none;
+}
+
 @media (max-width: 480px) {
   .beat-display {
     font-size: 2.4rem;

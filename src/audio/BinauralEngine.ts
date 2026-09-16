@@ -2,6 +2,7 @@
  * Stereo binaural beat engine.
  * Left = baseHz, Right = baseHz + beatHz.
  * Smooth gain ramps / crossfades when beat frequency changes (no clicks).
+ * Carrier frequencies are clamped safely below Nyquist for the AudioContext sample rate.
  */
 export class BinauralEngine {
   private ctx: AudioContext | null = null
@@ -16,12 +17,10 @@ export class BinauralEngine {
   private volume = 0.35
   private playing = false
   private readonly FADE = 0.04 // seconds for click-free transitions
+  /** Leave headroom below Nyquist to avoid aliasing near the limit */
+  private static readonly NYQUIST_MARGIN = 100
 
   async start(baseHz: number, beatHz: number, volume: number): Promise<void> {
-    this.baseHz = baseHz
-    this.beatHz = beatHz
-    this.volume = volume
-
     if (!this.ctx) {
       this.ctx = new AudioContext()
     }
@@ -29,14 +28,35 @@ export class BinauralEngine {
       await this.ctx.resume()
     }
 
+    this.baseHz = this.clampCarrier(baseHz)
+    this.beatHz = Math.max(0, beatHz)
+    this.volume = volume
+
     this.teardownNodes()
     this.createNodes()
     this.playing = true
   }
 
+  /** Max playable oscillator frequency for current sample rate (below Nyquist). */
+  private maxSafeHz(): number {
+    const sr = this.ctx?.sampleRate ?? 44100
+    return Math.max(100, sr / 2 - BinauralEngine.NYQUIST_MARGIN)
+  }
+
+  /** Clamp a carrier so both L and L+beat stay under Nyquist. */
+  private clampCarrier(baseHz: number): number {
+    const max = this.maxSafeHz()
+    // Reserve room for typical beat offsets (up to ~20 Hz ramp-out)
+    const ceiling = Math.max(50, max - Math.max(this.beatHz, 25))
+    return Math.min(Math.max(50, baseHz), ceiling)
+  }
+
   private createNodes(): void {
     if (!this.ctx) return
     const t = this.ctx.currentTime
+    const leftHz = this.clampCarrier(this.baseHz)
+    const rightHz = Math.min(leftHz + this.beatHz, this.maxSafeHz())
+    this.baseHz = leftHz
 
     this.merger = this.ctx.createChannelMerger(2)
     this.masterGain = this.ctx.createGain()
@@ -52,8 +72,8 @@ export class BinauralEngine {
     this.rightOsc = this.ctx.createOscillator()
     this.leftOsc.type = 'sine'
     this.rightOsc.type = 'sine'
-    this.leftOsc.frequency.setValueAtTime(this.baseHz, t)
-    this.rightOsc.frequency.setValueAtTime(this.baseHz + this.beatHz, t)
+    this.leftOsc.frequency.setValueAtTime(leftHz, t)
+    this.rightOsc.frequency.setValueAtTime(rightHz, t)
 
     this.leftOsc.connect(this.leftGain)
     this.rightOsc.connect(this.rightGain)
@@ -97,6 +117,8 @@ export class BinauralEngine {
 
     const t = this.ctx.currentTime
     const fade = this.FADE
+    const nextBeat = Math.max(0, beatHz)
+    const rightHz = Math.min(this.baseHz + nextBeat, this.maxSafeHz())
 
     // Dip gains briefly, change frequency, restore — avoids zipper noise
     this.leftGain.gain.cancelScheduledValues(t)
@@ -107,19 +129,21 @@ export class BinauralEngine {
     this.rightGain.gain.linearRampToValueAtTime(0.15, t + fade * 0.5)
 
     this.rightOsc.frequency.setValueAtTime(this.baseHz + this.beatHz, t)
-    this.rightOsc.frequency.linearRampToValueAtTime(this.baseHz + beatHz, t + fade)
-    this.beatHz = beatHz
+    this.rightOsc.frequency.linearRampToValueAtTime(rightHz, t + fade)
+    this.beatHz = nextBeat
 
     this.leftGain.gain.linearRampToValueAtTime(1, t + fade)
     this.rightGain.gain.linearRampToValueAtTime(1, t + fade)
   }
 
   setBaseHz(baseHz: number): void {
-    this.baseHz = baseHz
+    const clamped = this.clampCarrier(baseHz)
+    this.baseHz = clamped
     if (!this.ctx || !this.playing || !this.leftOsc || !this.rightOsc) return
     const t = this.ctx.currentTime
-    this.leftOsc.frequency.setTargetAtTime(baseHz, t, 0.02)
-    this.rightOsc.frequency.setTargetAtTime(baseHz + this.beatHz, t, 0.02)
+    const rightHz = Math.min(clamped + this.beatHz, this.maxSafeHz())
+    this.leftOsc.frequency.setTargetAtTime(clamped, t, 0.02)
+    this.rightOsc.frequency.setTargetAtTime(rightHz, t, 0.02)
   }
 
   setVolume(volume: number): void {

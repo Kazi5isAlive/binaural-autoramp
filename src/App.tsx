@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAutoRamp } from './hooks/useAutoRamp'
 import type { MeditatorLevel, SessionConfig } from './types'
 import {
-  BASE_PRESETS,
+  BASE_HZ_MAX,
+  BASE_HZ_MIN,
+  BASE_PRESET_GROUPS,
   MAX_SAVED_CONFIGS,
   TARGET_PRESETS,
 } from './types'
@@ -53,6 +55,17 @@ function levelHint(level: MeditatorLevel): string {
   }
 }
 
+
+function formatBaseLabel(hz: number): string {
+  return hz >= 1000 ? `${hz / 1000} kHz` : `${hz} Hz`
+}
+
+function clampBaseHz(hz: number): number {
+  if (!Number.isFinite(hz)) return BASE_HZ_MIN
+  return Math.min(BASE_HZ_MAX, Math.max(BASE_HZ_MIN, Math.round(hz)))
+}
+
+
 export default function App() {
   const { state, start, pause, resume, stop, setVolume, previewSchedule } =
     useAutoRamp()
@@ -60,6 +73,7 @@ export default function App() {
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState<SessionConfig[]>([])
   const [saveName, setSaveName] = useState('')
+  const [customBaseDraft, setCustomBaseDraft] = useState(String(DEFAULT_CONFIG.baseHz))
 
   const sessionActive =
     state.isRunning || state.phase === 'done' || state.phase === 'paused'
@@ -78,6 +92,13 @@ export default function App() {
 
   const update = <K extends keyof SessionConfig>(key: K, value: SessionConfig[K]) => {
     setConfig((c) => ({ ...c, [key]: value }))
+    if (key === 'baseHz') setCustomBaseDraft(String(value as number))
+  }
+
+  const applyCustomBase = (raw: string) => {
+    const clamped = clampBaseHz(Number(raw))
+    setCustomBaseDraft(String(clamped))
+    setConfig((c) => ({ ...c, baseHz: clamped }))
   }
 
   const handleStart = async () => {
@@ -94,6 +115,7 @@ export default function App() {
   const handleLoad = (c: SessionConfig) => {
     if (state.isRunning) return
     setConfig({ ...c })
+    setCustomBaseDraft(String(c.baseHz))
   }
 
   const handleDelete = (name: string) => {
@@ -237,21 +259,53 @@ export default function App() {
         </div>
         <div className="field">
           <label>Base frequency (carrier)</label>
-          <div className="segmented">
-            {BASE_PRESETS.map((hz) => (
-              <button
-                key={hz}
-                type="button"
-                className={config.baseHz === hz ? 'active' : ''}
-                disabled={state.isRunning || state.isPaused}
-                onClick={() => update('baseHz', hz)}
-              >
-                {hz >= 1000 ? `${hz / 1000} kHz` : `${hz} Hz`}
-              </button>
+          <div className="base-groups">
+            {BASE_PRESET_GROUPS.map((group) => (
+              <div key={group.label} className="base-group">
+                <div className="base-group-label">{group.label}</div>
+                <div className="segmented">
+                  {group.presets.map((hz) => (
+                    <button
+                      key={hz}
+                      type="button"
+                      className={config.baseHz === hz ? 'active' : ''}
+                      disabled={state.isRunning || state.isPaused}
+                      onClick={() => update('baseHz', hz)}
+                    >
+                      {formatBaseLabel(hz)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
+          <div className="custom-base-row">
+            <label htmlFor="custom-base-hz">Custom base (Hz)</label>
+            <input
+              id="custom-base-hz"
+              type="number"
+              min={BASE_HZ_MIN}
+              max={BASE_HZ_MAX}
+              step={1}
+              value={customBaseDraft}
+              disabled={state.isRunning || state.isPaused}
+              onChange={(e) => setCustomBaseDraft(e.target.value)}
+              onBlur={(e) => applyCustomBase(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur()
+                }
+              }}
+            />
+            <span className="custom-base-range">
+              {BASE_HZ_MIN}–{BASE_HZ_MAX} Hz
+            </span>
+          </div>
           <p className="hint">
-            Lower bases often preferred by males; higher by females — experiment.
+            Try Mid first, then High. Carriers at 12–16 kHz are often inaudible as
+            pure tones for adults, but the beat still forms from the left/right
+            difference if both tones play. Lower bases are often preferred by males;
+            higher by females — experiment.
           </p>
         </div>
       </section>
@@ -336,7 +390,7 @@ export default function App() {
                 <div className="name">{c.name}</div>
                 <div className="meta">
                   {levelLabel(c.meditatorLevel)} · {formatHz(c.targetHz)} Hz · base{' '}
-                  {c.baseHz} · hold {formatDuration(c.holdDurationSec)}
+                  {formatBaseLabel(c.baseHz)} · hold {formatDuration(c.holdDurationSec)}
                 </div>
               </div>
               <button
