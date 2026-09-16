@@ -1,12 +1,16 @@
 import type { SessionConfig } from '../types'
 import { MAX_SAVED_CONFIGS, STORAGE_KEY } from '../types'
+import { normalizeConfig } from './schedule'
 
 export function loadConfigs(): SessionConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as SessionConfig[]
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_SAVED_CONFIGS) : []
+    const parsed = JSON.parse(raw) as Partial<SessionConfig>[]
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .slice(0, MAX_SAVED_CONFIGS)
+      .map((c) => normalizeConfig({ ...c, name: c.name || 'Config' }))
   } catch {
     return []
   }

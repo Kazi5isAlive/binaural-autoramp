@@ -4,6 +4,8 @@ export type Phase = 'idle' | 'ramp-in' | 'hold' | 'ramp-out' | 'done' | 'paused'
 export interface SessionConfig {
   name: string
   meditatorLevel: MeditatorLevel
+  /** Ramp-in starting beat Hz (stepped down to target). Ignored when level is good. */
+  rampInStartHz: number
   targetHz: number
   baseHz: number
   stepDurationSec: number
@@ -35,6 +37,10 @@ export const TARGET_PRESETS = [4, 3.8, 3.75] as const
 /** Absolute UI / clamp range for custom base (carrier) frequency */
 export const BASE_HZ_MIN = 50
 export const BASE_HZ_MAX = 16000
+
+/** Adjustable ramp-in start beat range */
+export const RAMP_IN_START_MIN = 8
+export const RAMP_IN_START_MAX = 25
 
 /**
  * Carrier presets grouped Low / Mid / High.
