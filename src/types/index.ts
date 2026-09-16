@@ -4,9 +4,12 @@ export type Phase = 'idle' | 'ramp-in' | 'hold' | 'ramp-out' | 'done' | 'paused'
 export interface SessionConfig {
   name: string
   meditatorLevel: MeditatorLevel
-  /** Ramp-in starting beat Hz (stepped down to target). Ignored when level is good. */
+  /** Beat journey start (From): stepped down to target. */
   rampInStartHz: number
+  /** Beat journey valley (To): held before ramping out. */
   targetHz: number
+  /** Beat journey end target; defaults to the From value. */
+  rampOutTargetHz: number
   baseHz: number
   stepDurationSec: number
   holdDurationSec: number
@@ -38,9 +41,14 @@ export const TARGET_PRESETS = [4, 3.8, 3.75] as const
 export const BASE_HZ_MIN = 50
 export const BASE_HZ_MAX = 16000
 
-/** Adjustable ramp-in start beat range */
-export const RAMP_IN_START_MIN = 8
-export const RAMP_IN_START_MAX = 25
+/** Beat-frequency range controls (separate from the carrier/base frequency). */
+export const BEAT_HZ_MIN = 0.5
+export const BEAT_HZ_MAX = 40
+export const BEAT_HZ_STEP = 0.05
+
+/** Backward-compatible names for older callers. */
+export const RAMP_IN_START_MIN = BEAT_HZ_MIN
+export const RAMP_IN_START_MAX = BEAT_HZ_MAX
 
 /**
  * Carrier presets grouped Low / Mid / High.
@@ -59,7 +67,6 @@ export const BASE_PRESET_GROUPS: ReadonlyArray<{
 /** Flat list of all preset carriers (kept for convenience / legacy checks) */
 export const BASE_PRESETS = BASE_PRESET_GROUPS.flatMap((g) => [...g.presets]) as readonly number[]
 
-export const RAMP_OUT_TARGET = 18 // beta ~15-20 Hz
 export const RAMP_OUT_STEP_FACTOR = 0.4 // steeper = shorter steps
 export const MAX_SAVED_CONFIGS = 5
 export const STORAGE_KEY = 'binaural-autoramp-configs'

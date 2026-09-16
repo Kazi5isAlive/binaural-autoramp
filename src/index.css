@@ -430,6 +430,70 @@ header.app-header h1 {
 }
 
 
+.range-description {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: -0.4rem 0 1rem;
+}
+
+.range-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.range-field label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.range-field input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.range-field input[type='number']:focus {
+  border-color: var(--accent);
+}
+
+.range-field span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.carrier-band-picker input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.carrier-band-values {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.carrier-band-values strong {
+  color: var(--accent);
+}
+
 /* Base frequency groups (Low / Mid / High) */
 .base-groups {
   display: flex;
@@ -496,6 +560,9 @@ header.app-header h1 {
 }
 
 @media (max-width: 480px) {
+  .range-fields {
+    grid-template-columns: 1fr;
+  }
   .beat-display {
     font-size: 2.4rem;
   }

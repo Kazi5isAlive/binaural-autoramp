@@ -46,7 +46,7 @@ export class BinauralEngine {
   /** Clamp a carrier so both L and L+beat stay under Nyquist. */
   private clampCarrier(baseHz: number): number {
     const max = this.maxSafeHz()
-    // Reserve room for typical beat offsets (up to ~20 Hz ramp-out)
+    // Reserve room for configured beat offsets
     const ceiling = Math.max(50, max - Math.max(this.beatHz, 25))
     return Math.min(Math.max(50, baseHz), ceiling)
   }

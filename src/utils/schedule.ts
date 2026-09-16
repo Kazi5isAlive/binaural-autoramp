@@ -1,8 +1,7 @@
 import type { MeditatorLevel, ScheduleStep, SessionConfig } from '../types'
 import {
-  RAMP_IN_START_MAX,
-  RAMP_IN_START_MIN,
-  RAMP_OUT_TARGET,
+  BEAT_HZ_MAX,
+  BEAT_HZ_MIN,
   RAMP_OUT_STEP_FACTOR,
 } from '../types'
 
@@ -12,79 +11,83 @@ export function presetRampInStartHz(level: MeditatorLevel, targetHz: number): nu
     case 'good':
       return targetHz
     case 'fair':
-      return 10
+      return 8
     case 'poor':
-      return 20
+      return 12
   }
 }
 
 /** Effective ramp-in start used by the schedule builder. */
+function clampBeatHz(raw: number, fallback: number): number {
+  const value = Number.isFinite(raw) ? raw : fallback
+  return Math.min(BEAT_HZ_MAX, Math.max(BEAT_HZ_MIN, value))
+}
+
+function roundBeatHz(value: number): number {
+  return Number(value.toFixed(2))
+}
+
+/** Effective From value; the range fields are the schedule source of truth. */
 export function resolveRampInStartHz(config: SessionConfig): number {
-  if (config.meditatorLevel === 'good') return config.targetHz
-  const raw = Number.isFinite(config.rampInStartHz)
-    ? config.rampInStartHz
-    : presetRampInStartHz(config.meditatorLevel, config.targetHz)
-  const clamped = Math.min(
-    RAMP_IN_START_MAX,
-    Math.max(RAMP_IN_START_MIN, Math.round(raw))
-  )
-  return Math.max(clamped, Math.ceil(config.targetHz))
+  const targetHz = clampBeatHz(config.targetHz, 4)
+  return Math.max(targetHz, clampBeatHz(config.rampInStartHz, targetHz))
+}
+
+/** Effective Out-to value; legacy saved configs default to their From value. */
+export function resolveRampOutTargetHz(config: SessionConfig): number {
+  const targetHz = clampBeatHz(config.targetHz, 4)
+  return Math.max(targetHz, clampBeatHz(config.rampOutTargetHz, config.rampInStartHz))
 }
 
 /**
- * Build full auto-ramp schedule: ramp-in → hold → ramp-out.
- * Steps down from ramp-in start to target, holds, then climbs toward ~18 Hz beta.
+ * Build full auto-ramp schedule: From → To → hold → Out-to.
+ * The range controls are explicit: each leg advances in 1 Hz steps, preserving
+ * fractional endpoints such as 3.8 or 3.75.
  */
 export function buildSchedule(config: SessionConfig): ScheduleStep[] {
   const steps: ScheduleStep[] = []
-  const { meditatorLevel, targetHz, stepDurationSec, holdDurationSec } = config
+  const targetHz = clampBeatHz(config.targetHz, 4)
   const startHz = resolveRampInStartHz(config)
+  const outTargetHz = resolveRampOutTargetHz(config)
 
-  // --- Ramp In ---
-  if (meditatorLevel === 'good' || startHz <= targetHz + 0.001) {
+  // --- Ramp In: From down to To ---
+  if (startHz <= targetHz + 0.001) {
     steps.push({
       beatHz: targetHz,
-      durationSec: Math.min(15, stepDurationSec),
+      durationSec: Math.min(15, config.stepDurationSec),
       phase: 'ramp-in',
     })
   } else {
-    let current = Math.round(startHz)
-    while (current > targetHz + 0.05) {
-      steps.push({
-        beatHz: current,
-        durationSec: stepDurationSec,
-        phase: 'ramp-in',
-      })
-      current -= 1
+    let current = roundBeatHz(startHz)
+    steps.push({ beatHz: current, durationSec: config.stepDurationSec, phase: 'ramp-in' })
+    while (current - 1 > targetHz + 0.001) {
+      current = roundBeatHz(current - 1)
+      steps.push({ beatHz: current, durationSec: config.stepDurationSec, phase: 'ramp-in' })
     }
-    steps.push({
-      beatHz: targetHz,
-      durationSec: stepDurationSec,
-      phase: 'ramp-in',
-    })
+    if (Math.abs(current - targetHz) > 0.001) {
+      steps.push({ beatHz: targetHz, durationSec: config.stepDurationSec, phase: 'ramp-in' })
+    }
   }
 
-  // --- Hold at target ---
+  // --- Hold at To ---
   steps.push({
     beatHz: targetHz,
-    durationSec: holdDurationSec,
+    durationSec: config.holdDurationSec,
     phase: 'hold',
   })
 
-  // --- Ramp Out: steeper (shorter steps) back toward beta ---
-  // Allow shorter out-steps when step duration is already short (e.g. Quick Demo)
+  // --- Ramp Out: To up to the explicit Out-to value ---
   const outStepDur = Math.max(
-    Math.min(10, stepDurationSec),
-    Math.round(stepDurationSec * RAMP_OUT_STEP_FACTOR)
+    Math.min(10, config.stepDurationSec),
+    Math.round(config.stepDurationSec * RAMP_OUT_STEP_FACTOR)
   )
-  let outHz = Math.ceil(targetHz + 0.01)
-  while (outHz <= RAMP_OUT_TARGET) {
-    steps.push({
-      beatHz: outHz,
-      durationSec: outStepDur,
-      phase: 'ramp-out',
-    })
-    outHz += 1
+  if (outTargetHz > targetHz + 0.001) {
+    let outHz = roundBeatHz(targetHz + 1)
+    while (outHz < outTargetHz - 0.001) {
+      steps.push({ beatHz: outHz, durationSec: outStepDur, phase: 'ramp-out' })
+      outHz = roundBeatHz(outHz + 1)
+    }
+    steps.push({ beatHz: outTargetHz, durationSec: outStepDur, phase: 'ramp-out' })
   }
 
   return steps
@@ -108,7 +111,7 @@ export function formatHz(hz: number): string {
   return parseFloat(hz.toFixed(2)).toString()
 }
 
-/** Compact schedule string like "20→19→…→4 · hold · 5→…→18" */
+/** Compact schedule string like "8→7→…→4 · hold · 5→…→8" */
 export function formatScheduleSummary(steps: ScheduleStep[]): string {
   const rampIn = steps.filter((s) => s.phase === 'ramp-in').map((s) => formatHz(s.beatHz))
   const rampOut = steps.filter((s) => s.phase === 'ramp-out').map((s) => formatHz(s.beatHz))
@@ -127,31 +130,33 @@ export function formatScheduleSummary(steps: ScheduleStep[]): string {
 
 export const DEFAULT_CONFIG: SessionConfig = {
   name: 'Default',
-  meditatorLevel: 'poor',
-  rampInStartHz: 20,
+  meditatorLevel: 'good',
+  rampInStartHz: 4,
   targetHz: 4,
-  baseHz: 100,
+  rampOutTargetHz: 4,
+  baseHz: 12000,
   stepDurationSec: 45,
   holdDurationSec: 45 * 60,
   volume: 0.35,
 }
 
 /**
- * One-click short session: start ~20 Hz (beta), step down to 4, hold, climb back up.
+ * One-click short session: start at 8 Hz, step down to 4, hold, climb back up.
  * Hear the full down→up valley in a few minutes.
  */
 export const QUICK_DEMO_CONFIG: SessionConfig = {
   name: 'Quick Demo',
-  meditatorLevel: 'poor',
-  rampInStartHz: 20,
+  meditatorLevel: 'fair',
+  rampInStartHz: 8,
   targetHz: 4,
-  baseHz: 200,
+  rampOutTargetHz: 8,
+  baseHz: 12000,
   stepDurationSec: 8,
   holdDurationSec: 60,
   volume: 0.4,
 }
 
-/** Normalize legacy saved configs missing rampInStartHz */
+/** Normalize legacy saved configs and add the explicit Out-to range value. */
 export function normalizeConfig(raw: Partial<SessionConfig> & Pick<SessionConfig, 'name'>): SessionConfig {
   const level = raw.meditatorLevel ?? DEFAULT_CONFIG.meditatorLevel
   const targetHz = raw.targetHz ?? DEFAULT_CONFIG.targetHz
@@ -159,11 +164,16 @@ export function normalizeConfig(raw: Partial<SessionConfig> & Pick<SessionConfig
     typeof raw.rampInStartHz === 'number' && Number.isFinite(raw.rampInStartHz)
       ? raw.rampInStartHz
       : presetRampInStartHz(level, targetHz)
+  const rampOutTargetHz =
+    typeof raw.rampOutTargetHz === 'number' && Number.isFinite(raw.rampOutTargetHz)
+      ? raw.rampOutTargetHz
+      : rampInStartHz
   return {
     name: raw.name || 'Config',
     meditatorLevel: level,
     rampInStartHz,
     targetHz,
+    rampOutTargetHz,
     baseHz: raw.baseHz ?? DEFAULT_CONFIG.baseHz,
     stepDurationSec: raw.stepDurationSec ?? DEFAULT_CONFIG.stepDurationSec,
     holdDurationSec: raw.holdDurationSec ?? DEFAULT_CONFIG.holdDurationSec,

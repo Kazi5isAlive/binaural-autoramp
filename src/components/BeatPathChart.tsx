@@ -104,10 +104,10 @@ export function BeatPathChart({
       } else {
         const label =
           seg.step.phase === 'ramp-in'
-            ? 'Ramp in (down to theta)'
+            ? 'Ramp in (down to To)'
             : seg.step.phase === 'hold'
               ? 'Hold'
-              : 'Ramp out (up to beta)'
+              : 'Ramp out (up to Out to)'
         phaseBands.push({
           phase: seg.step.phase,
           label,
@@ -179,7 +179,7 @@ export function BeatPathChart({
         className="beat-path-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Beat frequency over time: ramps down to target, holds, then climbs toward beta"
+        aria-label="Beat frequency over time: ramps down to To, holds, then climbs toward Out to"
       >
         {/* Phase background bands */}
         {phaseBands.map((band) => (

@@ -6,9 +6,10 @@ import {
   BASE_HZ_MAX,
   BASE_HZ_MIN,
   BASE_PRESET_GROUPS,
+  BEAT_HZ_MAX,
+  BEAT_HZ_MIN,
+  BEAT_HZ_STEP,
   MAX_SAVED_CONFIGS,
-  RAMP_IN_START_MAX,
-  RAMP_IN_START_MIN,
   TARGET_PRESETS,
 } from './types'
 import {
@@ -38,13 +39,13 @@ function phaseStatusCopy(
     case 'hold':
       return `HOLD at ${formatHz(targetHz)} Hz`
     case 'ramp-out':
-      return `Climbing UP · ${formatHz(currentBeatHz)} Hz → toward beta`
+      return `Climbing UP · ${formatHz(currentBeatHz)} Hz → toward Out to`
     case 'done':
       return 'Journey complete · down → hold → up'
     case 'paused':
       return 'Paused'
     default:
-      return 'Ready · beta → theta → beta'
+      return 'Ready · From → To → Out to'
   }
 }
 
@@ -53,9 +54,9 @@ function levelLabel(level: MeditatorLevel): string {
     case 'good':
       return 'Good'
     case 'fair':
-      return 'Fair · start 10 (alpha)'
+      return 'Fair · optional 8 Hz'
     case 'poor':
-      return 'Poor · start 20 (beta)'
+      return 'Poor · optional 12 Hz'
   }
 }
 
@@ -64,9 +65,9 @@ function levelHint(level: MeditatorLevel): string {
     case 'good':
       return 'Little/no ramp-in — go to target immediately'
     case 'fair':
-      return 'Start at 10 Hz (alpha) and step down to target'
+      return 'Start at 8 Hz and step down to target'
     case 'poor':
-      return 'Start at 20 Hz (beta) and step down to target'
+      return 'Start at 12 Hz and step down to target'
   }
 }
 
@@ -77,6 +78,11 @@ function formatBaseLabel(hz: number): string {
 function clampBaseHz(hz: number): number {
   if (!Number.isFinite(hz)) return BASE_HZ_MIN
   return Math.min(BASE_HZ_MAX, Math.max(BASE_HZ_MIN, Math.round(hz)))
+}
+
+function clampBeatHz(hz: number): number {
+  if (!Number.isFinite(hz)) return DEFAULT_CONFIG.targetHz
+  return Math.min(BEAT_HZ_MAX, Math.max(BEAT_HZ_MIN, Number(hz.toFixed(2))))
 }
 
 export default function App() {
@@ -121,12 +127,35 @@ export default function App() {
     if (key === 'baseHz') setCustomBaseDraft(String(value as number))
   }
 
+  const updateBeatRange = (key: 'rampInStartHz' | 'targetHz' | 'rampOutTargetHz', raw: number) => {
+    const value = clampBeatHz(raw)
+    setConfig((c) => {
+      if (key === 'rampInStartHz') {
+        const fromHz = Math.max(value, c.targetHz)
+        const outToHz = c.rampOutTargetHz === c.rampInStartHz
+          ? fromHz
+          : Math.max(c.rampOutTargetHz, c.targetHz)
+        return { ...c, rampInStartHz: fromHz, rampOutTargetHz: outToHz }
+      }
+      if (key === 'targetHz') {
+        const toHz = Math.min(value, c.rampInStartHz)
+        const outToHz = c.rampOutTargetHz === c.targetHz
+          ? toHz
+          : Math.max(c.rampOutTargetHz, toHz)
+        return { ...c, targetHz: toHz, rampOutTargetHz: outToHz }
+      }
+      return { ...c, rampOutTargetHz: Math.max(value, c.targetHz) }
+    })
+  }
+
   const setMeditatorLevel = (level: MeditatorLevel) => {
-    setConfig((c) => ({
-      ...c,
-      meditatorLevel: level,
-      rampInStartHz: presetRampInStartHz(level, c.targetHz),
-    }))
+    setConfig((c) => {
+      const fromHz = presetRampInStartHz(level, c.targetHz)
+      const outToHz = c.rampOutTargetHz === c.rampInStartHz
+        ? fromHz
+        : Math.max(c.rampOutTargetHz, c.targetHz)
+      return { ...c, meditatorLevel: level, rampInStartHz: fromHz, rampOutTargetHz: outToHz }
+    })
   }
 
   const applyCustomBase = (raw: string) => {
@@ -245,7 +274,7 @@ export default function App() {
                 className="btn btn-demo"
                 disabled={locked}
                 onClick={applyQuickDemo}
-                title="Load short Poor/20 Hz→4 Hz→beta session"
+                title="Load short 8 Hz→4 Hz→8 Hz session"
               >
                 Quick Demo
               </button>
@@ -280,8 +309,8 @@ export default function App() {
 
         {!sessionActive && (
           <p className="demo-hint">
-            <strong>Quick Demo</strong> = start 20 Hz → down to 4 Hz → hold ~1 min →
-            climb to ~18 Hz (short steps so you can hear it).
+            <strong>Quick Demo</strong> = start 8 Hz → down to 4 Hz → hold ~1 min →
+            climb to 8 Hz (short steps so you can hear it).
           </p>
         )}
       </section>
@@ -296,7 +325,7 @@ export default function App() {
           isActive={sessionActive && state.phase !== 'done'}
         />
         <p className="hint path-hint">
-          Valley shape: ramp in (down to theta) → hold → ramp out (up to beta).
+          Valley shape: ramp in (down to To) → hold → ramp out (up to Out to).
         </p>
       </section>
 
@@ -352,34 +381,64 @@ export default function App() {
           </div>
           <p className="hint">{levelHint(config.meditatorLevel)}</p>
         </div>
-        {config.meditatorLevel !== 'good' && (
-          <div className="field">
-            <label htmlFor="ramp-in-start">Ramp-in start (Hz)</label>
-            <div className="slider-row">
-              <input
-                id="ramp-in-start"
-                type="range"
-                min={RAMP_IN_START_MIN}
-                max={RAMP_IN_START_MAX}
-                step={1}
-                value={config.rampInStartHz}
-                disabled={locked}
-                onChange={(e) => update('rampInStartHz', Number(e.target.value))}
-              />
-              <span className="value">{config.rampInStartHz} Hz</span>
-            </div>
-            <p className="hint">
-              Auto-ramp steps down from this beat to target in 1 Hz steps (
-              {RAMP_IN_START_MIN}–{RAMP_IN_START_MAX} Hz). Default 20 = beta start.
-            </p>
-          </div>
-        )}
+        <p className="hint">
+          Good keeps the beat fixed at To. Fair and Poor add an optional brainwave-band
+          ramp before the hold; adjust the range below as needed.
+        </p>
       </section>
 
       <section className={`card ${locked ? 'locked' : ''}`}>
-        <h2>Frequencies</h2>
-        <div className="field">
-          <label>Target beat (theta)</label>
+        <h2>Beat range (brainwave difference)</h2>
+        <p className="range-description">
+          This is the left/right frequency difference: From → To, hold at To, then ramp
+          toward Out to. The carrier tones are set separately below.
+        </p>
+        <div className="range-fields">
+          <div className="range-field">
+            <label htmlFor="beat-from">From (Hz)</label>
+            <input
+              id="beat-from"
+              type="number"
+              min={BEAT_HZ_MIN}
+              max={BEAT_HZ_MAX}
+              step={BEAT_HZ_STEP}
+              value={config.rampInStartHz}
+              disabled={locked}
+              onChange={(e) => updateBeatRange('rampInStartHz', Number(e.target.value))}
+            />
+            <span>ramp-in start</span>
+          </div>
+          <div className="range-field">
+            <label htmlFor="beat-to">To (Hz)</label>
+            <input
+              id="beat-to"
+              type="number"
+              min={BEAT_HZ_MIN}
+              max={BEAT_HZ_MAX}
+              step={BEAT_HZ_STEP}
+              value={config.targetHz}
+              disabled={locked}
+              onChange={(e) => updateBeatRange('targetHz', Number(e.target.value))}
+            />
+            <span>valley / hold</span>
+          </div>
+          <div className="range-field">
+            <label htmlFor="beat-out-to">Out to (Hz)</label>
+            <input
+              id="beat-out-to"
+              type="number"
+              min={BEAT_HZ_MIN}
+              max={BEAT_HZ_MAX}
+              step={BEAT_HZ_STEP}
+              value={config.rampOutTargetHz}
+              disabled={locked}
+              onChange={(e) => updateBeatRange('rampOutTargetHz', Number(e.target.value))}
+            />
+            <span>ramp-out end</span>
+          </div>
+        </div>
+        <div className="field range-presets">
+          <label>To presets</label>
           <div className="segmented">
             {TARGET_PRESETS.map((hz) => (
               <button
@@ -387,24 +446,66 @@ export default function App() {
                 type="button"
                 className={config.targetHz === hz ? 'active' : ''}
                 disabled={locked}
-                onClick={() => {
-                  setConfig((c) => ({
-                    ...c,
-                    targetHz: hz,
-                    rampInStartHz:
-                      c.meditatorLevel === 'good'
-                        ? hz
-                        : Math.max(c.rampInStartHz, Math.ceil(hz)),
-                  }))
-                }}
+                onClick={() => updateBeatRange('targetHz', hz)}
               >
                 {formatHz(hz)} Hz
               </button>
             ))}
           </div>
         </div>
+        <p className="hint">
+          Auto-ramp advances in 1 Hz steps and preserves fractional endpoints such as 3.8
+          and 3.75. Default is a fixed 4 Hz beat; choose Fair/Poor or set From/Out to for
+          an optional ramp.
+        </p>
+      </section>
+
+      <section className={`card ${locked ? 'locked' : ''}`}>
+        <h2>Carrier range</h2>
+        <p className="range-description">
+          Carrier (binaural tones): left ear = base; right ear = base + the beat above.
+          Choose the carrier here, with high carriers emphasized.
+        </p>
+        <div className="field carrier-high-band">
+          <label>High carrier presets</label>
+          <div className="segmented">
+            {[12000, 13000, 14000].map((hz) => (
+              <button
+                key={hz}
+                type="button"
+                className={config.baseHz === hz ? 'active' : ''}
+                disabled={locked}
+                onClick={() => update('baseHz', hz)}
+              >
+                {formatBaseLabel(hz)}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={config.baseHz >= 12000 && config.baseHz <= 14000 ? 'active' : ''}
+              disabled={locked}
+              onClick={() => update('baseHz', 12000)}
+            >
+              12–14 kHz band
+            </button>
+          </div>
+        </div>
+        <div className="field carrier-band-picker">
+          <label htmlFor="high-carrier-band">12–14 kHz band picker</label>
+          <input
+            id="high-carrier-band"
+            type="range"
+            min={12000}
+            max={14000}
+            step={100}
+            value={Math.min(14000, Math.max(12000, config.baseHz))}
+            disabled={locked}
+            onChange={(e) => update('baseHz', Number(e.target.value))}
+          />
+          <div className="carrier-band-values"><span>12 kHz</span><strong>{formatBaseLabel(Math.min(14000, Math.max(12000, config.baseHz)))}</strong><span>14 kHz</span></div>
+        </div>
         <div className="field">
-          <label>Base frequency (carrier)</label>
+          <label>Carrier base (Hz)</label>
           <div className="base-groups">
             {BASE_PRESET_GROUPS.map((group) => (
               <div key={group.label} className="base-group">
@@ -535,8 +636,8 @@ export default function App() {
               <div>
                 <div className="name">{c.name}</div>
                 <div className="meta">
-                  {levelLabel(c.meditatorLevel)} · start {c.rampInStartHz} →{' '}
-                  {formatHz(c.targetHz)} Hz · base {formatBaseLabel(c.baseHz)} · hold{' '}
+                  {levelLabel(c.meditatorLevel)} · {formatHz(c.rampInStartHz)} →{' '}
+                  {formatHz(c.targetHz)} → {formatHz(c.rampOutTargetHz)} Hz · base {formatBaseLabel(c.baseHz)} · hold{' '}
                   {formatDuration(c.holdDurationSec)}
                 </div>
               </div>
