@@ -168,9 +168,6 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>kazi5isalive Auto-Ramp</h1>
-        <p className="tagline">
-          Binaural beat trainer — press Start, it ramps down then up by itself
-        </p>
       </header>
 
       <div className="headphones-banner" role="status">

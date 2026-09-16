@@ -78,12 +78,6 @@ header.app-header h1 {
   color: transparent;
 }
 
-header.app-header .tagline {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  margin-top: 0.35rem;
-}
-
 .headphones-banner {
   display: flex;
   align-items: center;
