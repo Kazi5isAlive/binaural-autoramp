@@ -81,6 +81,7 @@ export default function App() {
     resume,
     stop,
     setVolume,
+    setToneSoftness,
     setJetEnabled,
     setJetMix,
     previewSchedule,
@@ -960,8 +961,9 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Volume</h2>
+        <h2>Volume & tone</h2>
         <div className="field">
+          <label>Carrier volume</label>
           <div className="slider-row">
             <input
               type="range"
@@ -977,7 +979,33 @@ export default function App() {
             />
             <span className="value">{Math.round(config.volume * 100)}%</span>
           </div>
-          <p className="hint">Keep comfortable — soft is fine. Avoid ear fatigue.</p>
+          <p className="hint">
+            Default is quieter. Keep comfortable — soft is fine. Avoid ear fatigue.
+          </p>
+        </div>
+        <div className="field">
+          <label>Tone softness</label>
+          <div className="slider-row">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={config.toneSoftness ?? 0.7}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setConfig((c) => ({ ...c, toneSoftness: v }))
+                if (state.isRunning) setToneSoftness(v)
+              }}
+            />
+            <span className="value">
+              {Math.round((config.toneSoftness ?? 0.7) * 100)}%
+            </span>
+          </div>
+          <p className="hint">
+            Same beat &amp; carrier Hz — warmer lowpass and gentler level. Default
+            leans soft; lower for a brighter sine.
+          </p>
         </div>
       </section>
 
@@ -997,8 +1025,8 @@ export default function App() {
             Jet engine ambient bed
           </label>
           <p className="hint">
-            Stereo bed only — binaural beat stays in the pure tones; noise ducks in
-            deep hold.
+            Continuous stereo bed (never restarts mid-session). Beat stays in the
+            pure tones; noise slowly ducks in deep hold.
           </p>
         </div>
         {config.jetEnabled && (
@@ -1020,7 +1048,7 @@ export default function App() {
               <span className="value">{Math.round(config.jetMix * 100)}%</span>
             </div>
             <p className="hint">
-              Default ~20%. Entry can swell; hold stays a quiet bed. Hard-capped so
+              Default ~20%. Slow multi-second swells only — no gaps. Hard-capped so
               noise never drowns the carriers.
             </p>
           </div>

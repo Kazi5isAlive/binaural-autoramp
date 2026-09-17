@@ -69,7 +69,8 @@ export const DEFAULT_CONFIG: SessionConfig = {
   baseHz: 512,
   carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE],
   exitMode: 'short-ramp',
-  volume: 0.35,
+  volume: 0.22,
+  toneSoftness: 0.7,
   jetEnabled: true,
   jetMix: 0.2,
 }
@@ -110,7 +111,8 @@ export const QUICK_DEMO_CONFIG: SessionConfig = {
   baseHz: 512,
   carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE],
   exitMode: 'short-ramp',
-  volume: 0.4,
+  volume: 0.28,
+  toneSoftness: 0.7,
   jetEnabled: true,
   jetMix: 0.2,
 }
@@ -675,6 +677,10 @@ export function normalizeConfig(
           : [],
     exitMode: raw.exitMode ?? (rampOutTargetHz > targetHz + 0.05 ? 'full-ramp' : 'gentle-stop'),
     volume: raw.volume ?? base.volume,
+    toneSoftness:
+      typeof raw.toneSoftness === 'number' && Number.isFinite(raw.toneSoftness)
+        ? Math.min(1, Math.max(0, raw.toneSoftness))
+        : (base.toneSoftness ?? 0.7),
     jetEnabled: raw.jetEnabled ?? base.jetEnabled,
     jetMix:
       typeof raw.jetMix === 'number' && Number.isFinite(raw.jetMix)

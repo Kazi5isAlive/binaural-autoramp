@@ -69,6 +69,11 @@ export interface SessionConfig {
 
   exitMode: ExitMode
   volume: number
+  /**
+   * Tone softness / warmth (0–1). Same beat + carrier Hz; softer = gentler
+   * lowpass + slightly lower perceived level. Default leans warm.
+   */
+  toneSoftness: number
 
   /** Jet-engine ambient bed (identical stereo — no competing beat). */
   jetEnabled: boolean

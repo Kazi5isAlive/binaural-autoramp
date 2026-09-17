@@ -187,7 +187,12 @@ export function useAutoRamp() {
       engineRef.current = engine
       const first = schedule[0]
       lastBaseRef.current = first.baseHz
-      await engine.start(first.baseHz, first.beatHz, config.volume)
+      await engine.start(
+        first.baseHz,
+        first.beatHz,
+        config.volume,
+        config.toneSoftness ?? 0.7
+      )
 
       const jet = new JetNoiseEngine()
       const ctx = engine.audioContext
@@ -273,6 +278,10 @@ export function useAutoRamp() {
     jetRef.current?.setCarrierVolume(volume)
   }, [])
 
+  const setToneSoftness = useCallback((softness: number) => {
+    engineRef.current?.setSoftness(softness)
+  }, [])
+
   const setJetEnabled = useCallback((enabled: boolean) => {
     jetRef.current?.setEnabled(enabled)
   }, [])
@@ -296,6 +305,7 @@ export function useAutoRamp() {
     resume,
     stop,
     setVolume,
+    setToneSoftness,
     setJetEnabled,
     setJetMix,
     previewSchedule: buildSchedule,
