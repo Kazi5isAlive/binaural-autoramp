@@ -27,6 +27,7 @@ High-carrier mode (12–14 kHz) remains available as an alternate.
 - Quick Demo (compressed classic shape)
 - Manual timing / carrier / exit controls
 - Click-free Web Audio (stereo)
+- Optional jet-engine ambient bed (identical stereo; ducks in deep hold)
 - Save named configurations
 - Dark meditation UI
 

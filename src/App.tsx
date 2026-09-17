@@ -74,8 +74,17 @@ function phaseStatusCopy(
 }
 
 export default function App() {
-  const { state, start, pause, resume, stop, setVolume, previewSchedule } =
-    useAutoRamp()
+  const {
+    state,
+    start,
+    pause,
+    resume,
+    stop,
+    setVolume,
+    setJetEnabled,
+    setJetMix,
+    previewSchedule,
+  } = useAutoRamp()
 
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState<SessionConfig[]>([])
@@ -970,6 +979,52 @@ export default function App() {
           </div>
           <p className="hint">Keep comfortable — soft is fine. Avoid ear fatigue.</p>
         </div>
+      </section>
+
+      <section className="card">
+        <h2>Jet engine noise</h2>
+        <div className="field">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={config.jetEnabled}
+              onChange={(e) => {
+                const on = e.target.checked
+                setConfig((c) => ({ ...c, jetEnabled: on }))
+                if (state.isRunning) setJetEnabled(on)
+              }}
+            />
+            Jet engine ambient bed
+          </label>
+          <p className="hint">
+            Stereo bed only — binaural beat stays in the pure tones; noise ducks in
+            deep hold.
+          </p>
+        </div>
+        {config.jetEnabled && (
+          <div className="field">
+            <label>Jet mix / intensity</label>
+            <div className="slider-row">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={config.jetMix}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setConfig((c) => ({ ...c, jetMix: v }))
+                  if (state.isRunning) setJetMix(v)
+                }}
+              />
+              <span className="value">{Math.round(config.jetMix * 100)}%</span>
+            </div>
+            <p className="hint">
+              Default ~20%. Entry can swell; hold stays a quiet bed. Hard-capped so
+              noise never drowns the carriers.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="card">

@@ -70,6 +70,8 @@ export const DEFAULT_CONFIG: SessionConfig = {
   carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE],
   exitMode: 'short-ramp',
   volume: 0.35,
+  jetEnabled: true,
+  jetMix: 0.2,
 }
 
 /** Less-experienced entry (20→4) variant of the classic program. */
@@ -109,6 +111,8 @@ export const QUICK_DEMO_CONFIG: SessionConfig = {
   carrierSchedule: [...CLASSIC_CARRIER_SCHEDULE],
   exitMode: 'short-ramp',
   volume: 0.4,
+  jetEnabled: true,
+  jetMix: 0.2,
 }
 
 /** Manual / high-carrier alternate — fixed 12 kHz carrier, simple path. */
@@ -671,6 +675,11 @@ export function normalizeConfig(
           : [],
     exitMode: raw.exitMode ?? (rampOutTargetHz > targetHz + 0.05 ? 'full-ramp' : 'gentle-stop'),
     volume: raw.volume ?? base.volume,
+    jetEnabled: raw.jetEnabled ?? base.jetEnabled,
+    jetMix:
+      typeof raw.jetMix === 'number' && Number.isFinite(raw.jetMix)
+        ? Math.min(1, Math.max(0, raw.jetMix))
+        : base.jetMix,
   }
 }
 

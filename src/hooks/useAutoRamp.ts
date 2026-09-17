@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BinauralEngine } from '../audio/BinauralEngine'
+import { JetNoiseEngine, type JetPhase } from '../audio/JetNoiseEngine'
 import type { Phase, ScheduleStep, SessionConfig, SessionState } from '../types'
 import {
   buildSchedule,
@@ -50,6 +51,7 @@ function computeUpcoming(
 
 export function useAutoRamp() {
   const engineRef = useRef<BinauralEngine | null>(null)
+  const jetRef = useRef<JetNoiseEngine | null>(null)
   const scheduleRef = useRef<ScheduleStep[]>([])
   const stepIndexRef = useRef(0)
   const stepEndAtRef = useRef(0)
@@ -69,6 +71,13 @@ export function useAutoRamp() {
     }
   }
 
+  const stopJet = useCallback(async () => {
+    if (jetRef.current) {
+      await jetRef.current.stop()
+      jetRef.current = null
+    }
+  }, [])
+
   const applyStepAudio = useCallback((step: ScheduleStep) => {
     const engine = engineRef.current
     if (!engine) return
@@ -78,6 +87,8 @@ export function useAutoRamp() {
       lastBaseRef.current = step.baseHz
     }
     engine.setBeatHz(step.beatHz)
+    // Jet bed follows phase: swell on entry/wake/dip, duck in deep hold
+    jetRef.current?.setPhase(step.phase as JetPhase)
   }, [])
 
   const advanceToStep = useCallback(
@@ -85,8 +96,7 @@ export function useAutoRamp() {
       const schedule = scheduleRef.current
       if (index >= schedule.length) {
         clearTick()
-        engineRef.current?.stop()
-        engineRef.current = null
+        const last = schedule[schedule.length - 1]
         setState((prev) => ({
           ...prev,
           phase: 'done',
@@ -94,10 +104,18 @@ export function useAutoRamp() {
           isPaused: false,
           stepRemainingSec: 0,
           totalRemainingSec: 0,
-          currentBeatHz: schedule[schedule.length - 1]?.beatHz ?? prev.currentBeatHz,
-          currentBaseHz: schedule[schedule.length - 1]?.baseHz ?? prev.currentBaseHz,
+          currentBeatHz: last?.beatHz ?? prev.currentBeatHz,
+          currentBaseHz: last?.baseHz ?? prev.currentBaseHz,
           upcomingLabel: '',
         }))
+        // Jet must stop before closing the shared AudioContext
+        void (async () => {
+          await stopJet()
+          if (engineRef.current) {
+            await engineRef.current.stop()
+            engineRef.current = null
+          }
+        })()
         return
       }
 
@@ -119,7 +137,7 @@ export function useAutoRamp() {
         upcomingLabel: computeUpcoming(schedule, index, step.durationSec),
       }))
     },
-    [applyStepAudio]
+    [applyStepAudio, stopJet]
   )
 
   const tick = useCallback(() => {
@@ -152,6 +170,7 @@ export function useAutoRamp() {
   const start = useCallback(
     async (config: SessionConfig) => {
       clearTick()
+      await stopJet()
       if (engineRef.current) {
         await engineRef.current.stop()
         engineRef.current = null
@@ -169,6 +188,17 @@ export function useAutoRamp() {
       const first = schedule[0]
       lastBaseRef.current = first.baseHz
       await engine.start(first.baseHz, first.beatHz, config.volume)
+
+      const jet = new JetNoiseEngine()
+      const ctx = engine.audioContext
+      if (ctx) jet.attach(ctx)
+      jetRef.current = jet
+      await jet.start(
+        config.volume,
+        config.jetEnabled ?? true,
+        config.jetMix ?? 0.2,
+        first.phase as JetPhase
+      )
 
       setState({
         phase: first.phase,
@@ -188,7 +218,7 @@ export function useAutoRamp() {
       stepEndAtRef.current = performance.now() + first.durationSec * 1000
       tickRef.current = requestAnimationFrame(tick)
     },
-    [tick]
+    [tick, stopJet]
   )
 
   const pause = useCallback(async () => {
@@ -200,6 +230,7 @@ export function useAutoRamp() {
     )
     pausedTotalElapsedRef.current +=
       (performance.now() - startedAtRef.current) / 1000
+    // Shared AudioContext — suspend pauses carriers + jet together
     await engineRef.current.pause()
     setState((prev) => ({ ...prev, isPaused: true, phase: 'paused' }))
   }, [])
@@ -212,6 +243,7 @@ export function useAutoRamp() {
 
     const schedule = scheduleRef.current
     const step = schedule[stepIndexRef.current]
+    if (step) jetRef.current?.setPhase(step.phase as JetPhase)
     setState((prev) => ({
       ...prev,
       isPaused: false,
@@ -227,24 +259,45 @@ export function useAutoRamp() {
 
   const stop = useCallback(async () => {
     clearTick()
+    await stopJet()
     if (engineRef.current) {
       await engineRef.current.stop()
       engineRef.current = null
     }
     scheduleRef.current = []
     setState(idleState)
-  }, [])
+  }, [stopJet])
 
   const setVolume = useCallback((volume: number) => {
     engineRef.current?.setVolume(volume)
+    jetRef.current?.setCarrierVolume(volume)
+  }, [])
+
+  const setJetEnabled = useCallback((enabled: boolean) => {
+    jetRef.current?.setEnabled(enabled)
+  }, [])
+
+  const setJetMix = useCallback((mix: number) => {
+    jetRef.current?.setMix(mix)
   }, [])
 
   useEffect(() => {
     return () => {
       clearTick()
+      void stopJet()
       engineRef.current?.stop()
     }
-  }, [])
+  }, [stopJet])
 
-  return { state, start, pause, resume, stop, setVolume, previewSchedule: buildSchedule }
+  return {
+    state,
+    start,
+    pause,
+    resume,
+    stop,
+    setVolume,
+    setJetEnabled,
+    setJetMix,
+    previewSchedule: buildSchedule,
+  }
 }

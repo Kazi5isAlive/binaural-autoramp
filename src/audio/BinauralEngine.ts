@@ -3,6 +3,10 @@
  * Left = baseHz, Right = baseHz + beatHz.
  * Smooth gain ramps / crossfades when beat frequency changes (no clicks).
  * Carrier frequencies are clamped safely below Nyquist for the AudioContext sample rate.
+ *
+ * Optional jet ambient bed is owned by JetNoiseEngine on the same AudioContext;
+ * sines stay at full intended level — noise is ducked separately and never forms
+ * a competing interaural beat (identical L/R).
  */
 export class BinauralEngine {
   private ctx: AudioContext | null = null
@@ -35,6 +39,11 @@ export class BinauralEngine {
     this.teardownNodes()
     this.createNodes()
     this.playing = true
+  }
+
+  /** Shared context for companion layers (jet noise). */
+  get audioContext(): AudioContext | null {
+    return this.ctx
   }
 
   /** Max playable oscillator frequency for current sample rate (below Nyquist). */

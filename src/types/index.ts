@@ -69,6 +69,11 @@ export interface SessionConfig {
 
   exitMode: ExitMode
   volume: number
+
+  /** Jet-engine ambient bed (identical stereo — no competing beat). */
+  jetEnabled: boolean
+  /** 0–1 user mix; engine also enforces a max noise-to-carrier ratio. */
+  jetMix: number
 }
 
 export interface ScheduleStep {
