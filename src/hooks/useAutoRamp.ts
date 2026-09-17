@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BinauralEngine } from '../audio/BinauralEngine'
+import { IsochronicEngine } from '../audio/IsochronicEngine'
 import { JetNoiseEngine, type JetPhase } from '../audio/JetNoiseEngine'
 import type { Phase, ScheduleStep, SessionConfig, SessionState } from '../types'
 import {
@@ -49,9 +50,24 @@ function computeUpcoming(
   return stepIndex >= 0 && schedule.length > 0 ? 'Session winding down' : ''
 }
 
+function resolveIsoRate(
+  beatHz: number,
+  config: Pick<SessionConfig, 'isoRateMode' | 'isoFixedHz'>
+): number {
+  if (config.isoRateMode === 'fixed') {
+    return Math.max(0.5, Math.min(40, config.isoFixedHz ?? 15))
+  }
+  return Math.max(0.5, Math.min(40, beatHz))
+}
+
 export function useAutoRamp() {
   const engineRef = useRef<BinauralEngine | null>(null)
   const jetRef = useRef<JetNoiseEngine | null>(null)
+  const isoRef = useRef<IsochronicEngine | null>(null)
+  const isoConfigRef = useRef<Pick<SessionConfig, 'isoRateMode' | 'isoFixedHz'>>({
+    isoRateMode: 'follow-beat',
+    isoFixedHz: 15,
+  })
   const scheduleRef = useRef<ScheduleStep[]>([])
   const stepIndexRef = useRef(0)
   const stepEndAtRef = useRef(0)
@@ -71,7 +87,11 @@ export function useAutoRamp() {
     }
   }
 
-  const stopJet = useCallback(async () => {
+  const stopLayers = useCallback(async () => {
+    if (isoRef.current) {
+      await isoRef.current.stop()
+      isoRef.current = null
+    }
     if (jetRef.current) {
       await jetRef.current.stop()
       jetRef.current = null
@@ -89,6 +109,8 @@ export function useAutoRamp() {
     engine.setBeatHz(step.beatHz)
     // Jet bed follows phase: swell on entry/wake/dip, duck in deep hold
     jetRef.current?.setPhase(step.phase as JetPhase)
+    // Isochronic pulse rate follows beat (or stays on fixed override)
+    isoRef.current?.setRateHz(resolveIsoRate(step.beatHz, isoConfigRef.current))
   }, [])
 
   const advanceToStep = useCallback(
@@ -108,9 +130,9 @@ export function useAutoRamp() {
           currentBaseHz: last?.baseHz ?? prev.currentBaseHz,
           upcomingLabel: '',
         }))
-        // Jet must stop before closing the shared AudioContext
+        // Layers must stop before closing the shared AudioContext
         void (async () => {
-          await stopJet()
+          await stopLayers()
           if (engineRef.current) {
             await engineRef.current.stop()
             engineRef.current = null
@@ -137,7 +159,7 @@ export function useAutoRamp() {
         upcomingLabel: computeUpcoming(schedule, index, step.durationSec),
       }))
     },
-    [applyStepAudio, stopJet]
+    [applyStepAudio, stopLayers]
   )
 
   const tick = useCallback(() => {
@@ -170,7 +192,7 @@ export function useAutoRamp() {
   const start = useCallback(
     async (config: SessionConfig) => {
       clearTick()
-      await stopJet()
+      await stopLayers()
       if (engineRef.current) {
         await engineRef.current.stop()
         engineRef.current = null
@@ -182,6 +204,10 @@ export function useAutoRamp() {
       pausedTotalElapsedRef.current = 0
       startedAtRef.current = performance.now()
       stepIndexRef.current = 0
+      isoConfigRef.current = {
+        isoRateMode: config.isoRateMode ?? 'follow-beat',
+        isoFixedHz: config.isoFixedHz ?? 15,
+      }
 
       const engine = new BinauralEngine()
       engineRef.current = engine
@@ -194,8 +220,9 @@ export function useAutoRamp() {
         config.toneSoftness ?? 0.7
       )
 
-      const jet = new JetNoiseEngine()
       const ctx = engine.audioContext
+
+      const jet = new JetNoiseEngine()
       if (ctx) jet.attach(ctx)
       jetRef.current = jet
       await jet.start(
@@ -203,6 +230,16 @@ export function useAutoRamp() {
         config.jetEnabled ?? true,
         config.jetMix ?? 0.2,
         first.phase as JetPhase
+      )
+
+      const iso = new IsochronicEngine()
+      if (ctx) iso.attach(ctx)
+      isoRef.current = iso
+      await iso.start(
+        config.volume,
+        config.isoEnabled ?? false,
+        config.isoMix ?? 0.12,
+        resolveIsoRate(first.beatHz, isoConfigRef.current)
       )
 
       setState({
@@ -223,7 +260,7 @@ export function useAutoRamp() {
       stepEndAtRef.current = performance.now() + first.durationSec * 1000
       tickRef.current = requestAnimationFrame(tick)
     },
-    [tick, stopJet]
+    [tick, stopLayers]
   )
 
   const pause = useCallback(async () => {
@@ -235,7 +272,7 @@ export function useAutoRamp() {
     )
     pausedTotalElapsedRef.current +=
       (performance.now() - startedAtRef.current) / 1000
-    // Shared AudioContext — suspend pauses carriers + jet together
+    // Shared AudioContext — suspend pauses carriers + jet + iso together
     await engineRef.current.pause()
     setState((prev) => ({ ...prev, isPaused: true, phase: 'paused' }))
   }, [])
@@ -248,7 +285,10 @@ export function useAutoRamp() {
 
     const schedule = scheduleRef.current
     const step = schedule[stepIndexRef.current]
-    if (step) jetRef.current?.setPhase(step.phase as JetPhase)
+    if (step) {
+      jetRef.current?.setPhase(step.phase as JetPhase)
+      isoRef.current?.setRateHz(resolveIsoRate(step.beatHz, isoConfigRef.current))
+    }
     setState((prev) => ({
       ...prev,
       isPaused: false,
@@ -264,18 +304,19 @@ export function useAutoRamp() {
 
   const stop = useCallback(async () => {
     clearTick()
-    await stopJet()
+    await stopLayers()
     if (engineRef.current) {
       await engineRef.current.stop()
       engineRef.current = null
     }
     scheduleRef.current = []
     setState(idleState)
-  }, [stopJet])
+  }, [stopLayers])
 
   const setVolume = useCallback((volume: number) => {
     engineRef.current?.setVolume(volume)
     jetRef.current?.setCarrierVolume(volume)
+    isoRef.current?.setCarrierVolume(volume)
   }, [])
 
   const setToneSoftness = useCallback((softness: number) => {
@@ -290,13 +331,49 @@ export function useAutoRamp() {
     jetRef.current?.setMix(mix)
   }, [])
 
+  const setIsoEnabled = useCallback((enabled: boolean) => {
+    isoRef.current?.setEnabled(enabled)
+  }, [])
+
+  const setIsoMix = useCallback((mix: number) => {
+    isoRef.current?.setMix(mix)
+  }, [])
+
+  const setIsoRateMode = useCallback(
+    (mode: 'follow-beat' | 'fixed', fixedHz?: number) => {
+      isoConfigRef.current = {
+        isoRateMode: mode,
+        isoFixedHz:
+          typeof fixedHz === 'number'
+            ? fixedHz
+            : isoConfigRef.current.isoFixedHz,
+      }
+      const beat =
+        scheduleRef.current[stepIndexRef.current]?.beatHz ??
+        engineRef.current?.currentBeatHz ??
+        4
+      isoRef.current?.setRateHz(resolveIsoRate(beat, isoConfigRef.current))
+    },
+    []
+  )
+
+  const setIsoFixedHz = useCallback((hz: number) => {
+    isoConfigRef.current = {
+      ...isoConfigRef.current,
+      isoFixedHz: hz,
+    }
+    if (isoConfigRef.current.isoRateMode === 'fixed') {
+      isoRef.current?.setRateHz(resolveIsoRate(hz, isoConfigRef.current))
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       clearTick()
-      void stopJet()
+      void stopLayers()
       engineRef.current?.stop()
     }
-  }, [stopJet])
+  }, [stopLayers])
 
   return {
     state,
@@ -308,6 +385,10 @@ export function useAutoRamp() {
     setToneSoftness,
     setJetEnabled,
     setJetMix,
+    setIsoEnabled,
+    setIsoMix,
+    setIsoRateMode,
+    setIsoFixedHz,
     previewSchedule: buildSchedule,
   }
 }

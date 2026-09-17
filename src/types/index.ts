@@ -79,6 +79,18 @@ export interface SessionConfig {
   jetEnabled: boolean
   /** 0–1 user mix; engine also enforces a max noise-to-carrier ratio. */
   jetMix: number
+
+  /**
+   * Optional isochronic clicks/pulses — same in both ears (true isochronic,
+   * not a second binaural). Layers with binaural + jet; independent mix.
+   */
+  isoEnabled: boolean
+  /** 0–1 user mix; keep soft by default. Engine caps vs carrier. */
+  isoMix: number
+  /** Primary: follow current binaural beat Hz. Override: fixed pulse rate. */
+  isoRateMode: 'follow-beat' | 'fixed'
+  /** Used when isoRateMode is fixed (e.g. 15 / 20 Hz drill). */
+  isoFixedHz: number
 }
 
 export interface ScheduleStep {

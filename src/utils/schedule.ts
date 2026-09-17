@@ -73,6 +73,10 @@ export const DEFAULT_CONFIG: SessionConfig = {
   toneSoftness: 0.7,
   jetEnabled: true,
   jetMix: 0.2,
+  isoEnabled: false,
+  isoMix: 0.12,
+  isoRateMode: 'follow-beat',
+  isoFixedHz: 15,
 }
 
 /** Less-experienced entry (20→4) variant of the classic program. */
@@ -115,6 +119,10 @@ export const QUICK_DEMO_CONFIG: SessionConfig = {
   toneSoftness: 0.7,
   jetEnabled: true,
   jetMix: 0.2,
+  isoEnabled: false,
+  isoMix: 0.12,
+  isoRateMode: 'follow-beat',
+  isoFixedHz: 15,
 }
 
 /** Manual / high-carrier alternate — fixed 12 kHz carrier, simple path. */
@@ -686,6 +694,16 @@ export function normalizeConfig(
       typeof raw.jetMix === 'number' && Number.isFinite(raw.jetMix)
         ? Math.min(1, Math.max(0, raw.jetMix))
         : base.jetMix,
+    isoEnabled: raw.isoEnabled ?? base.isoEnabled,
+    isoMix:
+      typeof raw.isoMix === 'number' && Number.isFinite(raw.isoMix)
+        ? Math.min(1, Math.max(0, raw.isoMix))
+        : base.isoMix,
+    isoRateMode: raw.isoRateMode === 'fixed' ? 'fixed' : 'follow-beat',
+    isoFixedHz:
+      typeof raw.isoFixedHz === 'number' && Number.isFinite(raw.isoFixedHz)
+        ? Math.min(40, Math.max(0.5, raw.isoFixedHz))
+        : base.isoFixedHz,
   }
 }
 

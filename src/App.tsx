@@ -84,6 +84,10 @@ export default function App() {
     setToneSoftness,
     setJetEnabled,
     setJetMix,
+    setIsoEnabled,
+    setIsoMix,
+    setIsoRateMode,
+    setIsoFixedHz,
     previewSchedule,
   } = useAutoRamp()
 
@@ -1052,6 +1056,120 @@ export default function App() {
               noise never drowns the carriers.
             </p>
           </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Isochronic clicks</h2>
+        <div className="field">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={config.isoEnabled}
+              onChange={(e) => {
+                const on = e.target.checked
+                setConfig((c) => ({ ...c, isoEnabled: on }))
+                if (state.isRunning) setIsoEnabled(on)
+              }}
+            />
+            Isochronic clicks
+          </label>
+          <p className="hint">
+            Same soft pulses in both ears (true isochronic — not a second binaural).
+            Optional layer with the existing beat; keep mix low if tones feel
+            intrusive.
+          </p>
+        </div>
+        {config.isoEnabled && (
+          <>
+            <div className="field">
+              <label>Iso mix / intensity</label>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={config.isoMix}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setConfig((c) => ({ ...c, isoMix: v }))
+                    if (state.isRunning) setIsoMix(v)
+                  }}
+                />
+                <span className="value">{Math.round(config.isoMix * 100)}%</span>
+              </div>
+              <p className="hint">
+                Default ~12% (soft). Hard-capped so pulses stay under the carriers.
+              </p>
+            </div>
+            <div className="field">
+              <label>Pulse rate</label>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={config.isoRateMode === 'follow-beat' ? 'active' : ''}
+                  onClick={() => {
+                    setConfig((c) => ({ ...c, isoRateMode: 'follow-beat' }))
+                    if (state.isRunning) setIsoRateMode('follow-beat')
+                  }}
+                >
+                  Follow beat
+                </button>
+                <button
+                  type="button"
+                  className={config.isoRateMode === 'fixed' ? 'active' : ''}
+                  onClick={() => {
+                    setConfig((c) => ({ ...c, isoRateMode: 'fixed' }))
+                    if (state.isRunning) {
+                      setIsoRateMode('fixed', config.isoFixedHz)
+                    }
+                  }}
+                >
+                  Fixed Hz
+                </button>
+              </div>
+              <p className="hint">
+                Follow beat: 4 Hz beat → 4 soft pulses/sec (tracks ramps). Fixed:
+                lock a rate (e.g. 15 / 20 Hz) for a drill-style pulse.
+              </p>
+            </div>
+            {config.isoRateMode === 'fixed' && (
+              <div className="field">
+                <label>Fixed pulse rate</label>
+                <div className="segmented">
+                  {[10, 15, 20, 40].map((hz) => (
+                    <button
+                      key={hz}
+                      type="button"
+                      className={config.isoFixedHz === hz ? 'active' : ''}
+                      onClick={() => {
+                        setConfig((c) => ({ ...c, isoFixedHz: hz }))
+                        if (state.isRunning) setIsoFixedHz(hz)
+                      }}
+                    >
+                      {hz} Hz
+                    </button>
+                  ))}
+                </div>
+                <div className="slider-row" style={{ marginTop: '0.65rem' }}>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={40}
+                    step={0.5}
+                    value={config.isoFixedHz}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      setConfig((c) => ({ ...c, isoFixedHz: v }))
+                      if (state.isRunning) setIsoFixedHz(v)
+                    }}
+                  />
+                  <span className="value">{formatHz(config.isoFixedHz)} Hz</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </section>
 
